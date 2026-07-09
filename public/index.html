@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>CorePay</title>
+  <style>
+    body{margin:0;font-family:Arial;background:linear-gradient(135deg,#5b6ee1,#7450b8);color:#263044}
+    .login,.app{max-width:1100px;margin:40px auto;background:#f7f8ff;border-radius:20px;padding:28px}
+    input,button{padding:14px;border-radius:10px;border:1px solid #ddd;font-size:15px}
+    button{border:0;background:#2f8fe8;color:white;font-weight:bold;cursor:pointer}
+    .orange{background:#e86f1f}.red{background:#d83030}.green{background:#31a66a}
+    .row{display:flex;gap:20px;flex-wrap:wrap}
+    .card{flex:1;min-width:220px;background:white;border-radius:18px;padding:24px;box-shadow:0 8px 20px #0001}
+    .top{display:flex;justify-content:space-between;align-items:center}
+    table{width:100%;border-collapse:collapse;background:white;border-radius:16px;overflow:hidden}
+    th,td{padding:16px;border-bottom:1px solid #e5e7f0;text-align:left}
+    .hide{display:none}
+  </style>
+</head>
+<body>
+
+<div id="login" class="login">
+  <h2>CorePay Login</h2>
+  <input id="email" placeholder="E-mail" value="admin@corepay.local">
+  <input id="password" placeholder="Senha" type="password" value="123456">
+  <button onclick="login()">Entrar</button>
+</div>
+
+<div id="app" class="app hide">
+  <div class="top">
+    <h2>Bem-vindo, <span id="userName">Arthur</span></h2>
+    <div>
+      <button class="orange">Alterar Senha</button>
+      <button class="red" onclick="logout()">Deslogar</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <p>SALDO DISPONÍVEL</p>
+      <h1 id="saldo">R$ 0,00</h1>
+    </div>
+    <div class="card">
+      <p>CARREGAR SALDO</p>
+      <input id="depositAmount" placeholder="Valor" type="number">
+      <button class="green" onclick="depositar()">Depositar</button>
+    </div>
+    <div class="card">
+      <p>PAGAMENTOS</p>
+      <button>Pagar Pix</button>
+    </div>
+    <div class="card">
+      <p>SAQUE</p>
+      <button class="orange">Sacar</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:25px">
+    <h3>Extrato</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Tipo</th>
+          <th>Descrição</th>
+          <th>Valor</th>
+          <th>Saldo após</th>
+        </tr>
+      </thead>
+      <tbody id="extrato"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let token = localStorage.getItem('token');
+
+function moeda(v){
+  return Number(v || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+
+async function login(){
+  const res = await fetch('/auth/login',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:email.value,password:password.value})
+  });
+  const data = await res.json();
+  if(!data.ok){ alert(data.error || 'Erro ao entrar'); return; }
+  token = data.token;
+  localStorage.setItem('token', token);
+  await carregar();
+}
+
+async function carregar(){
+  if(!token) return;
+  const res = await fetch('/wallet/me',{headers:{Authorization:'Bearer '+token}});
+  const data = await res.json();
+  if(!data.ok){ logout(); return; }
+
+  document.getElementById('login').classList.add('hide');
+  document.getElementById('app').classList.remove('hide');
+  userName.innerText = data.wallet.name;
+  saldo.innerText = moeda(data.wallet.balance);
+
+  await carregarExtrato();
+}
+
+async function carregarExtrato(){
+  const res = await fetch('/wallet/statement',{headers:{Authorization:'Bearer '+token}});
+  const data = await res.json();
+
+  extrato.innerHTML = '';
+
+  if(!data.transactions.length){
+    extrato.innerHTML = '<tr><td colspan="5">Nenhuma movimentação ainda.</td></tr>';
+    return;
+  }
+
+  for(const t of data.transactions){
+    extrato.innerHTML += `
+      <tr>
+        <td>${t.created_at}</td>
+        <td>${t.type}</td>
+        <td>${t.description || ''}</td>
+        <td>${moeda(t.amount)}</td>
+        <td>${moeda(t.balance_after)}</td>
+      </tr>
+    `;
+  }
+}
+
+async function depositar(){
+  const amount = Number(depositAmount.value);
+  if(!amount || amount <= 0){ alert('Valor inválido'); return; }
+
+  const res = await fetch('/wallet/deposit',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      Authorization:'Bearer '+token
+    },
+    body:JSON.stringify({amount,description:'Carga manual pelo painel'})
+  });
+
+  const data = await res.json();
+  if(!data.ok){ alert(data.error || 'Erro ao depositar'); return; }
+
+  depositAmount.value = '';
+  await carregar();
+}
+
+function logout(){
+  localStorage.removeItem('token');
+  token = null;
+  document.getElementById('login').classList.remove('hide');
+  document.getElementById('app').classList.add('hide');
+}
+
+carregar();
+</script>
+
+</body>
+</html>

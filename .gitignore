@@ -1,0 +1,14 @@
+node_modules/
+dashboard/node_modules/
+.env
+corepay.db
+*.log
+teste-asaas.cjs
+
+api.txt
+*.txt
+.env
+node_modules/
+dashboard/node_modules/
+corepay.db
+teste-asaas.cjs
