@@ -184,7 +184,7 @@
 import { ref } from 'vue'
 import axios from 'axios'
 
-const API = 'http://localhost:4000'
+const API = 'https://corepay-8b76.onrender.com'
 
 const email = ref('admin@corepay.local')
 const password = ref('123456')
@@ -627,4 +627,5 @@ td {
   color: red;
 }
 </style>
+
 

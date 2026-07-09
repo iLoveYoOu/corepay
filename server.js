@@ -9,6 +9,7 @@ const userRoutes = require('./src/routes/users');
 const withdrawRoutes = require('./src/routes/withdraw');
 const integrationsRoutes = require('./src/routes/integrations');
 const depositRoutes = require('./src/routes/deposits');
+const asaasWebhookRoutes = require('./src/routes/asaas-webhooks');
 const adminRoutes = require('./src/routes/admin');
 
 const app = express();
@@ -24,6 +25,7 @@ app.use('/users', userRoutes);
 app.use('/withdraw', withdrawRoutes);
 app.use('/integrations', integrationsRoutes);
 app.use('/deposits', depositRoutes);
+app.use('/webhooks/asaas', asaasWebhookRoutes);
 app.use('/admin', adminRoutes);
 
 app.get('/health', (req, res) => {
@@ -53,6 +55,7 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`CorePay rodando na porta ${PORT}`);
 });
+
 
 
 
