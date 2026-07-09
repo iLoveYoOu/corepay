@@ -13,6 +13,8 @@ const asaasWebhookRoutes = require('./src/routes/asaas-webhooks');
 const adminRoutes = require('./src/routes/admin');
 
 const app = express();
+const seedAdmin = require('./src/db/seedAdmin');
+seedAdmin();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -55,6 +57,7 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`CorePay rodando na porta ${PORT}`);
 });
+
 
 
 
