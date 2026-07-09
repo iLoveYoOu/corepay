@@ -52,11 +52,25 @@ app.post('/webhooks/asaas/withdraw', (req, res) => {
     });
 });
 
+
+app.get('/backup/db', (req, res) => {
+  const token = req.query.token;
+
+  if (!process.env.BACKUP_TOKEN || token !== process.env.BACKUP_TOKEN) {
+    return res.status(403).json({ ok: false, error: 'Acesso negado' });
+  }
+
+  const file = 'corepay.db';
+
+  return res.download(file, `corepay-backup-${Date.now()}.db`);
+});
+
 const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {
   console.log(`CorePay rodando na porta ${PORT}`);
 });
+
 
 
 
