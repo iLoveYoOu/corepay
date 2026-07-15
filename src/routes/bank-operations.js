@@ -553,6 +553,42 @@ function sanitize(value, maxLength) {
     .slice(0, maxLength);
 }
 
+router.get('/history', auth, (req, res) => {
+  const limit = Math.min(
+    Math.max(Number(req.query.limit) || 30, 1),
+    180
+  );
+
+  const days = db.prepare(`
+    SELECT *
+    FROM bank_operation_days
+    WHERE user_id = ?
+    ORDER BY operation_date DESC, id DESC
+    LIMIT ?
+  `).all(req.user.id, limit);
+
+  return res.json({
+    ok: true,
+    days: days.map(day => ({
+      id: day.id,
+      operationDate: day.operation_date,
+      status: day.status,
+      openingTotal: money(day.opening_total_cents),
+      closingTotal:
+        day.closing_total_cents == null
+          ? null
+          : money(day.closing_total_cents),
+      profitTotal: money(day.profit_total_cents),
+      operatorShare: money(day.operator_share_cents),
+      capitalReplacement: money(day.capital_replacement_cents),
+      adjustments: money(day.adjustments_cents),
+      amountToSend: money(day.amount_to_send_cents),
+      openedAt: day.opened_at,
+      closedAt: day.closed_at
+    }))
+  });
+});
+
 router.post('/pix-static', auth, (req, res) => {
   const pixKey = String(req.body.pixKey || '').trim();
   const merchantName = sanitize(req.body.merchantName, 25);
