@@ -294,3 +294,162 @@ code {
     border-right-color: var(--border);
   }
 }
+
+/* TESOURARIA */
+
+.muted {
+  color: #667085;
+  line-height: 1.5;
+}
+
+.notice {
+  padding: 18px;
+  margin: 20px 0;
+  background: #fff4d6;
+  border: 1px solid #f0cb65;
+  border-radius: 14px;
+}
+
+.treasury-header,
+.operation-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.opening-panel {
+  background: white;
+  padding: 24px;
+  border-radius: 18px;
+  box-shadow: 0 8px 20px #0001;
+  margin-bottom: 28px;
+}
+
+.opening-panel > input {
+  width: 280px;
+  margin: 8px 0 20px;
+}
+
+.opening-banks {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.opening-banks label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.operation-bar {
+  background: white;
+  padding: 16px 20px;
+  border-radius: 14px;
+}
+
+.status-pill {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.status-pill.open {
+  background: #d9f7df;
+  color: #14752c;
+}
+
+.status-pill.closed {
+  background: #fde2e2;
+  color: #a11a1a;
+}
+
+.treasury-summary {
+  flex-wrap: wrap;
+}
+
+.treasury-summary .card {
+  min-width: 190px;
+}
+
+.bank-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+  margin: 26px 0;
+}
+
+.bank-card {
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 8px 20px #0001;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bank-name {
+  color: #667085;
+  font-size: 15px;
+}
+
+.bank-card strong {
+  font-size: 27px;
+}
+
+.bank-card small {
+  color: #87909f;
+}
+
+.bank-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.history-title {
+  margin-top: 38px;
+}
+
+@media (max-width: 900px) {
+  .app {
+    display: block;
+  }
+
+  aside {
+    width: auto;
+  }
+
+  .cards {
+    flex-direction: column;
+  }
+
+  main {
+    padding: 18px;
+  }
+
+  .treasury-header,
+  .operation-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}

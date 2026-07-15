@@ -11,6 +11,8 @@ const integrationsRoutes = require('./src/routes/integrations');
 const depositRoutes = require('./src/routes/deposits');
 const asaasWebhookRoutes = require('./src/routes/asaas-webhooks');
 const adminRoutes = require('./src/routes/admin');
+const directoryRoutes = require('./src/routes/directory');
+const treasuryRoutes = require('./src/routes/treasury');
 
 const app = express();
 const seedAdmin = require('./src/db/seedAdmin');
@@ -29,6 +31,8 @@ app.use('/integrations', integrationsRoutes);
 app.use('/deposits', depositRoutes);
 app.use('/webhooks/asaas', asaasWebhookRoutes);
 app.use('/admin', adminRoutes);
+app.use('/directory', directoryRoutes);
+app.use('/treasury', treasuryRoutes);
 
 app.get('/health', (req, res) => {
   res.json({
