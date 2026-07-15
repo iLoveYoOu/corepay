@@ -62,12 +62,37 @@ ON bank_operation_movements(day_id, created_at);
 `);
 
 function operationDate() {
-  return new Intl.DateTimeFormat('en-CA', {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
-    day: '2-digit'
-  }).format(new Date());
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+
+  const parts = Object.fromEntries(
+    formatter.formatToParts(new Date())
+      .filter(part => part.type !== 'literal')
+      .map(part => [part.type, Number(part.value)])
+  );
+
+  const beforeOpening =
+    parts.hour < 8 ||
+    (parts.hour === 8 && parts.minute < 30);
+
+  const date = new Date(Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day
+  ));
+
+  if (beforeOpening) {
+    date.setUTCDate(date.getUTCDate() - 1);
+  }
+
+  return date.toISOString().slice(0, 10);
 }
 
 function toCents(value, allowNegative = false) {
