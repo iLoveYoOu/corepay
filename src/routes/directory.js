@@ -8,7 +8,6 @@ const router = express.Router();
 const ROLES = [
   'super_admin',
   'admin',
-  'attendant',
   'operator'
 ];
 

@@ -123,6 +123,17 @@ if (defaultCompany) {
 }
 
 /*
+ * O perfil Atendente foi removido.
+ * Contas antigas preservam seus dados e passam a operar como Operador.
+ */
+db.prepare(`
+  UPDATE users
+  SET role = 'operator',
+      updated_at = CURRENT_TIMESTAMP
+  WHERE role = 'attendant'
+`).run();
+
+/*
  * Garante carteira para todos os usuários.
  */
 db.prepare(`
