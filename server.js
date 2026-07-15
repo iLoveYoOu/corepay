@@ -2,6 +2,8 @@
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 const authRoutes = require('./src/routes/auth');
 const walletRoutes = require('./src/routes/wallet');
 const paymentRoutes = require('./src/routes/payments');
@@ -21,8 +23,6 @@ seedAdmin();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static('public'));
-
 app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/payments', paymentRoutes);
@@ -59,6 +59,63 @@ app.get('/backup/db', (req, res) => {
 
   return res.download(file, `corepay-backup-${Date.now()}.db`);
 });
+
+
+/* DASHBOARD VUE PRODUCAO */
+
+const DASHBOARD_DIST = path.join(
+  __dirname,
+  'dashboard',
+  'dist'
+);
+
+const LEGACY_PUBLIC = path.join(
+  __dirname,
+  'public'
+);
+
+if (fs.existsSync(DASHBOARD_DIST)) {
+  console.log(
+    'Dashboard Vue encontrado:',
+    DASHBOARD_DIST
+  );
+
+  app.use(
+    express.static(DASHBOARD_DIST, {
+      index: false,
+      maxAge: process.env.NODE_ENV === 'production'
+        ? '1h'
+        : 0
+    })
+  );
+
+  /*
+   * Fallback da SPA.
+   *
+   * Só entrega index.html para requisições GET que aceitem HTML.
+   * Rotas da API já foram registradas antes deste bloco.
+   */
+  app.use((req, res, next) => {
+    if (
+      req.method !== 'GET' ||
+      !req.accepts('html')
+    ) {
+      return next();
+    }
+
+    return res.sendFile(
+      path.join(DASHBOARD_DIST, 'index.html')
+    );
+  });
+} else {
+  console.warn(
+    'dashboard/dist não encontrado. Usando public como fallback.'
+  );
+
+  app.use(express.static(LEGACY_PUBLIC));
+}
+
+/* FIM DASHBOARD VUE PRODUCAO */
 
 const PORT = process.env.PORT || 4000;
 

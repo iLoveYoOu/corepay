@@ -2,39 +2,120 @@
 const db = require('./database');
 
 function seedAdmin() {
-  const email = process.env.ADMIN_EMAIL;
-  const password = process.env.ADMIN_PASSWORD;
+  const email = String(
+    process.env.ADMIN_EMAIL || ''
+  ).trim().toLowerCase();
+
+  const password = String(
+    process.env.ADMIN_PASSWORD || ''
+  );
+
+  const name = String(
+    process.env.ADMIN_NAME || 'Administrador'
+  ).trim();
 
   if (!email || !password) {
-    console.log('ADMIN_EMAIL/ADMIN_PASSWORD não configurados.');
+    console.log(
+      'ADMIN_EMAIL/ADMIN_PASSWORD não configurados.'
+    );
+
     return;
   }
 
-  const hash = bcrypt.hashSync(password, 10);
+  const company = db.prepare(`
+    SELECT id
+    FROM companies
+    WHERE code = 'SP'
+  `).get();
 
-  const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
+  if (!company) {
+    throw new Error(
+      'Empresa padrão SP não encontrada.'
+    );
+  }
 
-  if (admin) {
+  const passwordHash = bcrypt.hashSync(
+    password,
+    10
+  );
+
+  const existing = db.prepare(`
+    SELECT *
+    FROM users
+    WHERE email = ?
+  `).get(email);
+
+  let userId;
+
+  if (existing) {
+    userId = existing.id;
+
     db.prepare(`
       UPDATE users
-      SET email = ?, password_hash = ?, name = ?, active = 1
+      SET
+        name = ?,
+        password_hash = ?,
+        role = 'super_admin',
+        active = 1,
+        company_id = ?,
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(email, hash, 'Arthur Admin', admin.id);
+    `).run(
+      name,
+      passwordHash,
+      company.id,
+      existing.id
+    );
 
-    console.log('Admin atualizado pelo ENV.');
+    console.log(
+      'Super Admin atualizado pelo ENV.'
+    );
   } else {
     const result = db.prepare(`
-      INSERT INTO users (name, email, password_hash, role, active)
-      VALUES (?, ?, ?, ?, 1)
-    `).run('Arthur Admin', email, hash, 'admin');
+      INSERT INTO users (
+        name,
+        email,
+        password_hash,
+        role,
+        active,
+        company_id,
+        updated_at
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        'super_admin',
+        1,
+        ?,
+        CURRENT_TIMESTAMP
+      )
+    `).run(
+      name,
+      email,
+      passwordHash,
+      company.id
+    );
 
-    db.prepare(`
-      INSERT INTO wallets (user_id, balance_cents)
-      VALUES (?, 0)
-    `).run(result.lastInsertRowid);
+    userId = Number(result.lastInsertRowid);
 
-    console.log('Admin criado pelo ENV.');
+    console.log(
+      'Super Admin criado pelo ENV.'
+    );
   }
+
+  db.prepare(`
+    INSERT INTO wallets (
+      user_id,
+      balance_cents
+    )
+    SELECT ?, 0
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM wallets
+      WHERE user_id = ?
+    )
+  `).run(userId, userId);
 }
 
 module.exports = seedAdmin;

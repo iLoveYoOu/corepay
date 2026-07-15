@@ -5,6 +5,16 @@ const db = new Database('corepay.db');
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function columnExists(table, column) {
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some(item => item.name === column);
+}
+
+/*
+ * Estrutura original do CorePay.
+ */
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,65 +46,112 @@ CREATE TABLE IF NOT EXISTS ledger (
 );
 
 /*
- * Um registro representa um dia operacional:
- * 08:30 até 03:00 do dia seguinte.
+ * CorePay Enterprise.
  */
-CREATE TABLE IF NOT EXISTS treasury_days (
+CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  operation_code TEXT UNIQUE NOT NULL,
-  operation_date TEXT UNIQUE NOT NULL,
-  capital_initial_cents INTEGER NOT NULL,
-  capital_available_cents INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
-  created_by INTEGER NOT NULL,
-  opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  closed_at TEXT,
-  closed_by INTEGER,
-  reopened_at TEXT,
-  reopened_by INTEGER,
-  FOREIGN KEY (created_by) REFERENCES users(id),
-  FOREIGN KEY (closed_by) REFERENCES users(id),
-  FOREIGN KEY (reopened_by) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS treasury_bank_balances (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  treasury_day_id INTEGER NOT NULL,
-  bank_code TEXT NOT NULL,
-  opening_balance_cents INTEGER NOT NULL DEFAULT 0,
-  balance_cents INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(treasury_day_id, bank_code),
-  FOREIGN KEY (treasury_day_id) REFERENCES treasury_days(id)
-);
-
-CREATE TABLE IF NOT EXISTS treasury_transactions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  treasury_day_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  bank_code TEXT NOT NULL,
-  movement_type TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  note TEXT,
-  capital_before_cents INTEGER NOT NULL,
-  capital_after_cents INTEGER NOT NULL,
-  bank_before_cents INTEGER NOT NULL,
-  bank_after_cents INTEGER NOT NULL,
-  reversed INTEGER NOT NULL DEFAULT 0,
-  reversed_at TEXT,
-  reversed_by INTEGER,
-  reversal_reason TEXT,
+  name TEXT NOT NULL,
+  code TEXT UNIQUE NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (treasury_day_id) REFERENCES treasury_days(id),
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (reversed_by) REFERENCES users(id)
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_treasury_transactions_day
-ON treasury_transactions(treasury_day_id);
-
-CREATE INDEX IF NOT EXISTS idx_treasury_transactions_created
-ON treasury_transactions(created_at);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER,
+  actor_user_id INTEGER,
+  target_user_id INTEGER,
+  action TEXT NOT NULL,
+  details TEXT,
+  ip_address TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id),
+  FOREIGN KEY (actor_user_id) REFERENCES users(id),
+  FOREIGN KEY (target_user_id) REFERENCES users(id)
+);
 `);
+
+/*
+ * Migração segura para bancos antigos.
+ */
+if (!columnExists('users', 'company_id')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN company_id INTEGER
+  `);
+}
+
+if (!columnExists('users', 'last_login_at')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN last_login_at TEXT
+  `);
+}
+
+if (!columnExists('users', 'updated_at')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN updated_at TEXT
+  `);
+}
+
+/*
+ * Empresa padrão.
+ */
+db.prepare(`
+  INSERT OR IGNORE INTO companies (
+    name,
+    code,
+    active
+  )
+  VALUES ('Empresa Principal', 'SP', 1)
+`).run();
+
+const defaultCompany = db.prepare(`
+  SELECT id
+  FROM companies
+  WHERE code = 'SP'
+`).get();
+
+if (defaultCompany) {
+  db.prepare(`
+    UPDATE users
+    SET company_id = ?
+    WHERE company_id IS NULL
+  `).run(defaultCompany.id);
+}
+
+/*
+ * Garante carteira para todos os usuários.
+ */
+db.prepare(`
+  INSERT INTO wallets (
+    user_id,
+    balance_cents
+  )
+  SELECT
+    u.id,
+    0
+  FROM users u
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM wallets w
+    WHERE w.user_id = u.id
+  )
+`).run();
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_users_company
+ON users(company_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_company
+ON audit_logs(company_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_actor
+ON audit_logs(actor_user_id);
+`);
+
+console.log('Banco CorePay verificado e migrado.');
 
 module.exports = db;

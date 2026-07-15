@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:dashboard": "npm --prefix dashboard ci --include=dev && npm --prefix dashboard run build",
+    "postinstall": "npm run build:dashboard"
   },
   "keywords": [],
   "author": "",

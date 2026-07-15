@@ -1,13 +1,26 @@
 ﻿import axios from 'axios'
 
 export const api = axios.create({
-  baseURL: 'http://localhost:4000'
+  baseURL: import.meta.env.VITE_API_URL || '',
+  timeout: 30000
 })
 
 export function authHeaders() {
   return {
     headers: {
-      Authorization: `Bearer ${localStorage.getItem('token')}`
+      Authorization:
+        `Bearer ${localStorage.getItem('token') || ''}`
     }
   }
 }
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token')
+    }
+
+    return Promise.reject(error)
+  }
+)
