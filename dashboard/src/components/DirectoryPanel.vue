@@ -58,10 +58,6 @@
             Administrador
           </option>
 
-          <option value="attendant">
-            Atendente
-          </option>
-
           <option value="operator">
             Operador
           </option>
@@ -264,7 +260,6 @@ function roleName(role) {
   const names = {
     super_admin: 'Super Admin',
     admin: 'Administrador',
-    attendant: 'Atendente',
     operator: 'Operador'
   }
 
@@ -357,7 +352,7 @@ async function editUser(user) {
 
   if (me.value.role === 'super_admin') {
     role = prompt(
-      'Perfil: admin, attendant ou operator',
+      'Perfil: admin ou operator',
       user.role
     ) || user.role
   }
