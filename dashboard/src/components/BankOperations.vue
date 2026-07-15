@@ -365,6 +365,55 @@
           </table>
         </div>
       </section>
+
+      <section class="panel history-panel">
+        <div class="section-title">
+          <div>
+            <span class="eyebrow">HISTÓRICO</span>
+            <h2>Fechamentos anteriores</h2>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Operação</th>
+                <th>Status</th>
+                <th>Inicial</th>
+                <th>Final</th>
+                <th>Lucro</th>
+                <th>Lucão deve enviar</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="day in state.history" :key="day.id">
+                <td>{{ day.operationDate }}</td>
+                <td>
+                  <span :class="['movement', day.status === 'closed' ? 'entry' : 'exit']">
+                    {{ day.status === 'closed' ? 'Fechado' : 'Aberto' }}
+                  </span>
+                </td>
+                <td>{{ money(day.openingTotal) }}</td>
+                <td>
+                  {{
+                    day.closingTotal == null
+                      ? '—'
+                      : money(day.closingTotal)
+                  }}
+                </td>
+                <td>{{ money(day.profitTotal) }}</td>
+                <td><strong>{{ money(day.amountToSend) }}</strong></td>
+              </tr>
+              <tr v-if="!state.history.length">
+                <td colspan="6" class="empty-row">
+                  Nenhum fechamento anterior.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </template>
   </div>
 </template>
@@ -382,6 +431,7 @@ const state = reactive({
   day: null,
   accounts: [],
   movements: [],
+  history: [],
   totals: {
     opening: 0,
     current: 0,
@@ -500,12 +550,20 @@ async function load() {
   loading.value = true
 
   try {
-    const { data } = await api.get(
-      '/bank-operations/today',
-      authHeaders()
-    )
+    const [todayResponse, historyResponse] =
+      await Promise.all([
+        api.get(
+          '/bank-operations/today',
+          authHeaders()
+        ),
+        api.get(
+          '/bank-operations/history?limit=30',
+          authHeaders()
+        )
+      ])
 
-    apply(data)
+    apply(todayResponse.data)
+    state.history = historyResponse.data.days || []
   } catch (error) {
     alert(
       error.response?.data?.error ||
@@ -610,6 +668,13 @@ async function closeDay() {
     )
 
     apply(data)
+
+    const historyResponse = await api.get(
+      '/bank-operations/history?limit=30',
+      authHeaders()
+    )
+
+    state.history = historyResponse.data.days || []
     showClose.value = false
   } catch (error) {
     alert(
