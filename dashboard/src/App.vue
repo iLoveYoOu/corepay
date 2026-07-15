@@ -756,7 +756,7 @@ async function depositar() {
 
   try {
     const { data } = await api.post(
-      '/deposits/asaas/pix',
+      '/deposits/mercadopago/pix',
       { amount },
       authHeaders()
     )
@@ -767,13 +767,49 @@ async function depositar() {
       payload: data.payload,
       encodedImage: data.encodedImage
     }
+
+    acompanharPagamentoMercadoPago(data.paymentId)
   } catch (err) {
     alert(
-      err.response?.data?.error?.errors?.[0]?.description ||
       err.response?.data?.error ||
-      'Erro ao gerar Pix'
+      'Erro ao gerar Pix Mercado Pago'
     )
   }
+}
+
+async function acompanharPagamentoMercadoPago(paymentId) {
+  if (!paymentId) return
+
+  let attempts = 0
+  const maxAttempts = 120
+
+  const timer = setInterval(async () => {
+    attempts++
+
+    try {
+      const { data } = await api.get(
+        `/deposits/mercadopago/${paymentId}/status`,
+        authHeaders()
+      )
+
+      if (data.approved || data.credited) {
+        clearInterval(timer)
+        pix.value.show = false
+        alert('Pagamento confirmado e saldo creditado.')
+        await carregar()
+        return
+      }
+    } catch (err) {
+      console.error(
+        'Erro ao consultar Pix Mercado Pago:',
+        err
+      )
+    }
+
+    if (attempts >= maxAttempts) {
+      clearInterval(timer)
+    }
+  }, 5000)
 }
 
 async function pagar() {
