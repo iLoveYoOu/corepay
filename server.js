@@ -16,6 +16,8 @@ const mercadoPagoWebhookRoutes =
 const adminRoutes = require('./src/routes/admin');
 const directoryRoutes = require('./src/routes/directory');
 const treasuryRoutes = require('./src/routes/treasury');
+const bankOperationRoutes =
+  require('./src/routes/bank-operations');
 
 const app = express();
 const seedAdmin = require('./src/db/seedAdmin');
@@ -37,6 +39,7 @@ app.use(
 app.use('/admin', adminRoutes);
 app.use('/directory', directoryRoutes);
 app.use('/treasury', treasuryRoutes);
+app.use('/bank-operations', bankOperationRoutes);
 
 app.get('/health', (req, res) => {
   res.json({
