@@ -20,6 +20,10 @@
           Tesouraria
         </button>
 
+        <button @click="tab='banking'">
+          Operação Bancária
+        </button>
+
         <button
           v-if="['admin','super_admin'].includes(wallet.role)"
           @click="tab='directory'"
@@ -104,6 +108,10 @@
               Alterar senha
             </button>
           </div>
+        </section>
+
+        <section v-if="tab==='banking'">
+          <BankOperations />
         </section>
 
         <section v-if="tab==='treasury'">
@@ -483,6 +491,7 @@ import { ref } from 'vue'
 import { api, authHeaders } from './services/api'
 import PixModal from './components/PixModal.vue'
 import DirectoryPanel from './components/DirectoryPanel.vue'
+import BankOperations from './components/BankOperations.vue'
 
 const email = ref('arthurcesarmaga@gmail.com')
 const password = ref('')
