@@ -28,6 +28,25 @@ function getWallet(userId) {
   `).get(userId);
 }
 
+function validateApprovedPayment(payment, deposit) {
+  const amountCents = Math.round(
+    Number(payment.transaction_amount) * 100
+  );
+  const currency = String(payment.currency_id || 'BRL');
+  const reference = String(payment.external_reference || '');
+
+  if (
+    !Number.isSafeInteger(amountCents) ||
+    amountCents !== deposit.amount_cents ||
+    currency !== 'BRL' ||
+    reference !== deposit.external_reference
+  ) {
+    throw new Error(
+      'Pagamento aprovado não corresponde ao depósito solicitado.'
+    );
+  }
+}
+
 function creditApprovedDeposit(payment) {
   const paymentId = String(payment.id || '');
 
@@ -68,6 +87,8 @@ function creditApprovedDeposit(payment) {
       statusDetail
     };
   }
+
+  validateApprovedPayment(payment, deposit);
 
   const transaction = db.transaction(() => {
     const current = db.prepare(`
@@ -138,6 +159,15 @@ function creditApprovedDeposit(payment) {
 
 router.post('/mercadopago/pix', auth, async (req, res) => {
   try {
+    if (process.env.ENABLE_MERCADOPAGO_DEPOSITS !== 'true') {
+      return res.status(410).json({
+        ok: false,
+        code: 'MERCADOPAGO_DEPOSITS_DISABLED',
+        error:
+          'Depósitos pelo Mercado Pago estão desativados para evitar tarifas. Use o Pix estático da Operação Bancária.'
+      });
+    }
+
     const amount = parseAmount(req.body.amount);
 
     if (!amount || amount <= 0) {

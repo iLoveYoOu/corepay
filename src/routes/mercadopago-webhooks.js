@@ -39,6 +39,23 @@ function creditPayment(payment) {
     };
   }
 
+  const amountCents = Math.round(
+    Number(payment.transaction_amount) * 100
+  );
+  const currency = String(payment.currency_id || 'BRL');
+  const reference = String(payment.external_reference || '');
+
+  if (
+    !Number.isSafeInteger(amountCents) ||
+    amountCents !== deposit.amount_cents ||
+    currency !== 'BRL' ||
+    reference !== deposit.external_reference
+  ) {
+    throw new Error(
+      'Pagamento aprovado não corresponde ao depósito solicitado.'
+    );
+  }
+
   const transaction = db.transaction(() => {
     const current = db.prepare(`
       SELECT *
@@ -144,6 +161,7 @@ router.post('/', async (req, res) => {
       '[MP WEBHOOK]',
       err.data || err.message
     );
+    return res.sendStatus(500);
   }
 
   return res.sendStatus(200);

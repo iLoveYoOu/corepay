@@ -16,7 +16,7 @@ const BANKS = Object.freeze([
 const VALID_BANKS = new Set(BANKS.map(bank => bank.code));
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') {
+  if (!['admin', 'super_admin'].includes(req.user.role)) {
     return res.status(403).json({
       ok: false,
       error: 'Apenas administradores podem executar esta ação.'
@@ -133,7 +133,7 @@ function getOperationalContext() {
   };
 }
 
-function autoCloseOldDays(currentOperationDate) {
+function autoCloseOldDays(currentOperationDate, companyId) {
   if (!currentOperationDate) {
     return;
   }
@@ -143,11 +143,12 @@ function autoCloseOldDays(currentOperationDate) {
     SET status = 'closed',
         closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
     WHERE status = 'open'
+      AND company_id = ?
       AND operation_date != ?
-  `).run(currentOperationDate);
+  `).run(companyId, currentOperationDate);
 }
 
-function getDayByDate(operationDate) {
+function getDayByDate(operationDate, companyId) {
   return db.prepare(`
     SELECT
       d.*,
@@ -157,7 +158,8 @@ function getDayByDate(operationDate) {
     LEFT JOIN users opener ON opener.id = d.created_by
     LEFT JOIN users closer ON closer.id = d.closed_by
     WHERE d.operation_date = ?
-  `).get(operationDate);
+      AND d.company_id = ?
+  `).get(operationDate, companyId);
 }
 
 function getBalances(dayId) {
@@ -310,10 +312,16 @@ function buildDayPayload(day, context) {
 router.get('/today', auth, (req, res) => {
   const context = getOperationalContext();
 
-  autoCloseOldDays(context.operationDate);
+  autoCloseOldDays(
+    context.operationDate,
+    req.user.companyId
+  );
 
   const day = context.operationDate
-    ? getDayByDate(context.operationDate)
+    ? getDayByDate(
+        context.operationDate,
+        req.user.companyId
+      )
     : null;
 
   return res.json({
@@ -333,9 +341,15 @@ router.post('/open', auth, (req, res) => {
     });
   }
 
-  autoCloseOldDays(context.operationDate);
+  autoCloseOldDays(
+    context.operationDate,
+    req.user.companyId
+  );
 
-  const existing = getDayByDate(context.operationDate);
+  const existing = getDayByDate(
+    context.operationDate,
+    req.user.companyId
+  );
 
   if (existing) {
     return res.status(409).json({
@@ -387,6 +401,7 @@ router.post('/open', auth, (req, res) => {
 
     const result = db.prepare(`
       INSERT INTO treasury_days (
+        company_id,
         operation_code,
         operation_date,
         capital_initial_cents,
@@ -394,8 +409,9 @@ router.post('/open', auth, (req, res) => {
         status,
         created_by
       )
-      VALUES (?, ?, ?, ?, 'open', ?)
+      VALUES (?, ?, ?, ?, ?, 'open', ?)
     `).run(
+      req.user.companyId,
       context.operationCode,
       context.operationDate,
       capitalInitialCents,
@@ -468,7 +484,10 @@ router.post('/open', auth, (req, res) => {
 
   transaction();
 
-  const day = getDayByDate(context.operationDate);
+  const day = getDayByDate(
+    context.operationDate,
+    req.user.companyId
+  );
 
   return res.status(201).json({
     ok: true,
@@ -487,9 +506,15 @@ router.post('/movement', auth, (req, res) => {
     });
   }
 
-  autoCloseOldDays(context.operationDate);
+  autoCloseOldDays(
+    context.operationDate,
+    req.user.companyId
+  );
 
-  const day = getDayByDate(context.operationDate);
+  const day = getDayByDate(
+    context.operationDate,
+    req.user.companyId
+  );
 
   if (!day) {
     return res.status(404).json({
@@ -630,7 +655,10 @@ router.post('/movement', auth, (req, res) => {
     });
   }
 
-  const updatedDay = getDayByDate(context.operationDate);
+  const updatedDay = getDayByDate(
+    context.operationDate,
+    req.user.companyId
+  );
 
   return res.json({
     ok: true,
@@ -646,7 +674,7 @@ router.post('/close', auth, requireAdmin, (req, res) => {
     context.operationDate;
 
   const day = operationDate
-    ? getDayByDate(operationDate)
+    ? getDayByDate(operationDate, req.user.companyId)
     : null;
 
   if (!day) {
@@ -671,7 +699,10 @@ router.post('/close', auth, requireAdmin, (req, res) => {
     WHERE id = ?
   `).run(req.user.id, day.id);
 
-  const updated = getDayByDate(day.operation_date);
+  const updated = getDayByDate(
+    day.operation_date,
+    req.user.companyId
+  );
 
   return res.json({
     ok: true,
@@ -690,7 +721,8 @@ router.post(
       SELECT *
       FROM treasury_days
       WHERE id = ?
-    `).get(dayId);
+        AND company_id = ?
+    `).get(dayId, req.user.companyId);
 
     if (!day) {
       return res.status(404).json({
@@ -740,9 +772,10 @@ router.get('/history', auth, (req, res) => {
       ) AS total_bank_cents
     FROM treasury_days d
     LEFT JOIN users u ON u.id = d.created_by
+    WHERE d.company_id = ?
     ORDER BY d.operation_date DESC
     LIMIT ?
-  `).all(limit).map(day => ({
+  `).all(req.user.companyId, limit).map(day => ({
     id: day.id,
     operationCode: day.operation_code,
     operationDate: day.operation_date,

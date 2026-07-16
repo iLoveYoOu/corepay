@@ -1,44 +1,70 @@
 ﻿<template>
   <div class="page">
-    <div v-if="!token" class="login">
-      <h1>CorePay</h1>
-      <input v-model="email" placeholder="E-mail" />
-      <input v-model="password" type="password" placeholder="Senha" />
-      <button @click="login">Entrar</button>
+    <form v-if="!token" class="login" @submit.prevent="login">
+      <div class="login-brand">CorePay</div>
+      <h1>Bem-vindo</h1>
+      <p class="login-copy">Entre para acessar sua operação.</p>
+      <label>
+        E-mail
+        <input
+          v-model="email"
+          type="email"
+          autocomplete="username"
+          placeholder="seu@email.com"
+        />
+      </label>
+      <label>
+        Senha
+        <input
+          v-model="password"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Sua senha"
+        />
+      </label>
+      <button type="submit" :disabled="authLoading">
+        {{ authLoading ? 'Entrando...' : 'Entrar' }}
+      </button>
       <p class="error">{{ error }}</p>
-    </div>
+    </form>
 
     <div v-else class="app">
       <aside>
         <h2>CorePay</h2>
 
-        <button @click="tab='dashboard'">
+        <button
+          :class="{ active: tab === 'dashboard' }"
+          @click="tab='dashboard'"
+        >
           Dashboard
         </button>
 
-        <button @click="abrirTesouraria">
+        <button
+          :class="{ active: tab === 'treasury' }"
+          @click="abrirTesouraria"
+        >
           Tesouraria
         </button>
 
-        <button @click="tab='banking'">
+        <button
+          :class="{ active: tab === 'banking' }"
+          @click="tab='banking'"
+        >
           Operação Bancária
         </button>
 
         <button
           v-if="['admin','super_admin'].includes(wallet.role)"
+          :class="{ active: tab === 'directory' }"
           @click="tab='directory'"
         >
           Administração
         </button>
 
         <button
-          v-if="['admin','super_admin'].includes(wallet.role)"
-          @click="tab='operators'"
+          :class="{ active: tab === 'statement' }"
+          @click="tab='statement'"
         >
-          Operadores
-        </button>
-
-        <button @click="tab='statement'">
           Extrato
         </button>
 
@@ -92,19 +118,7 @@
           </div>
 
           <div class="buttons">
-            <button @click="depositar">
-              Carregar saldo
-            </button>
-
-            <button @click="pagar">
-              Pagar Pix
-            </button>
-
-            <button class="orange" @click="sacar">
-              Sacar
-            </button>
-
-            <button @click="alterarSenha">
+            <button @click="showPasswordChange=true">
               Alterar senha
             </button>
           </div>
@@ -202,7 +216,7 @@
 
               <div
                 v-if="
-                  wallet.role === 'admin' &&
+                  ['admin', 'super_admin'].includes(wallet.role) &&
                   treasury.day.status === 'open'
                 "
               >
@@ -397,52 +411,6 @@
           </table>
         </section>
 
-        <section v-if="tab==='operators'">
-          <h1>Operadores</h1>
-
-          <div class="form">
-            <input v-model="newUser.name" placeholder="Nome" />
-            <input v-model="newUser.email" placeholder="E-mail" />
-            <input v-model="newUser.password" placeholder="Senha" />
-            <button @click="criarOperador">Criar</button>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Email</th>
-                <th>Saldo</th>
-                <th>Status</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              <tr v-for="u in operators" :key="u.id">
-                <td>{{ u.name }}</td>
-                <td>{{ u.email }}</td>
-                <td>{{ money(u.balance) }}</td>
-                <td>{{ u.active ? 'Ativo' : 'Bloqueado' }}</td>
-
-                <td>
-                  <button @click="creditar(u)">
-                    Adicionar
-                  </button>
-
-                  <button class="orange" @click="debitar(u)">
-                    Retirar
-                  </button>
-
-                  <button class="danger" @click="toggle(u)">
-                    {{ u.active ? 'Bloquear' : 'Ativar' }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-
         <section v-if="tab==='directory'">
           <DirectoryPanel />
         </section>
@@ -475,62 +443,100 @@
       </main>
     </div>
 
-    <PixModal
-      :show="pix.show"
-      :value="pix.value"
-      :payload="pix.payload"
-      :encodedImage="pix.encodedImage"
-      @close="pix.show=false"
-      @refresh="carregar"
-    />
+    <div
+      v-if="showPasswordChange"
+      class="modal-backdrop"
+      @click.self="cancelPasswordChange"
+    >
+      <form class="password-modal" @submit.prevent="alterarSenha">
+        <h2>Alterar minha senha</h2>
+
+        <label>
+          Senha atual
+          <input
+            v-model="currentPassword"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </label>
+
+        <label>
+          Nova senha
+          <input
+            v-model="newPassword"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
+
+        <label>
+          Confirmar nova senha
+          <input
+            v-model="newPasswordConfirmation"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" @click="cancelPasswordChange">
+            Cancelar
+          </button>
+          <button class="orange" type="submit">
+            Salvar senha
+          </button>
+        </div>
+      </form>
+    </div>
+
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { api, authHeaders } from './services/api'
-import PixModal from './components/PixModal.vue'
 import DirectoryPanel from './components/DirectoryPanel.vue'
 import BankOperations from './components/BankOperations.vue'
 
-const email = ref('arthurcesarmaga@gmail.com')
+const email = ref('')
 const password = ref('')
 const token = ref(localStorage.getItem('token'))
 const error = ref('')
+const authLoading = ref(false)
 const tab = ref('dashboard')
+const showPasswordChange = ref(false)
+const currentPassword = ref('')
+const newPassword = ref('')
+const newPasswordConfirmation = ref('')
 
 const wallet = ref({})
-const operators = ref([])
 const statement = ref([])
-const newUser = ref({
-  name: '',
-  email: '',
-  password: ''
-})
 
-const pix = ref({
-  show: false,
-  value: 0,
-  payload: '',
-  encodedImage: ''
-})
-
-const treasury = ref({
-  context: {
-    active: false,
-    operationCode: null
-  },
-  day: null,
-  banks: [],
-  transactions: [],
-  totals: {
-    bankBalance: 0,
-    capitalAvailable: 0,
-    controlledCapital: 0,
-    depositedToday: 0,
-    withdrawnToday: 0
+function emptyTreasury() {
+  return {
+    context: {
+      active: false,
+      operationCode: null
+    },
+    day: null,
+    banks: [],
+    transactions: [],
+    totals: {
+      bankBalance: 0,
+      capitalAvailable: 0,
+      controlledCapital: 0,
+      depositedToday: 0,
+      withdrawnToday: 0
+    }
   }
-})
+}
+
+const treasury = ref(emptyTreasury())
 
 const treasuryHistory = ref([])
 
@@ -568,18 +574,28 @@ function bankName(code) {
 }
 
 async function login() {
+  if (authLoading.value) return
+
+  error.value = ''
+  authLoading.value = true
+
   try {
     const { data } = await api.post('/auth/login', {
       email: email.value,
       password: password.value
     })
 
-    token.value = data.token
     localStorage.setItem('token', data.token)
-
     await carregar()
-  } catch {
-    error.value = 'Login inválido'
+    token.value = data.token
+    password.value = ''
+  } catch (err) {
+    clearSession()
+    error.value =
+      err.response?.data?.error ||
+      'Não foi possível entrar.'
+  } finally {
+    authLoading.value = false
   }
 }
 
@@ -596,10 +612,6 @@ async function carregar() {
     carregarTesouraria(),
     carregarHistoricoTesouraria()
   ])
-
-  if (['admin', 'super_admin'].includes(wallet.value.role)) {
-    await carregarOperadores()
-  }
 }
 
 async function abrirTesouraria() {
@@ -741,15 +753,6 @@ async function fecharDia() {
   }
 }
 
-async function carregarOperadores() {
-  const { data } = await api.get(
-    '/users',
-    authHeaders()
-  )
-
-  operators.value = data.users
-}
-
 async function carregarExtrato() {
   const { data } = await api.get(
     '/wallet/statement',
@@ -759,127 +762,33 @@ async function carregarExtrato() {
   statement.value = data.transactions
 }
 
-async function depositar() {
-  const amount = prompt('Valor para carregar:')
-  if (!amount) return
+async function alterarSenha() {
+  if (newPassword.value.length < 8) {
+    alert('A nova senha deve ter pelo menos 8 caracteres.')
+    return
+  }
+
+  if (newPassword.value !== newPasswordConfirmation.value) {
+    alert('As novas senhas não conferem.')
+    return
+  }
 
   try {
     const { data } = await api.post(
-      '/deposits/mercadopago/pix',
-      { amount },
-      authHeaders()
-    )
-
-    pix.value = {
-      show: true,
-      value: data.value,
-      payload: data.payload,
-      encodedImage: data.encodedImage
-    }
-
-    acompanharPagamentoMercadoPago(data.paymentId)
-  } catch (err) {
-    alert(
-      err.response?.data?.error ||
-      'Erro ao gerar Pix Mercado Pago'
-    )
-  }
-}
-
-async function acompanharPagamentoMercadoPago(paymentId) {
-  if (!paymentId) return
-
-  let attempts = 0
-  const maxAttempts = 120
-
-  const timer = setInterval(async () => {
-    attempts++
-
-    try {
-      const { data } = await api.get(
-        `/deposits/mercadopago/${paymentId}/status`,
-        authHeaders()
-      )
-
-      if (data.approved || data.credited) {
-        clearInterval(timer)
-        pix.value.show = false
-        alert('Pagamento confirmado e saldo creditado.')
-        await carregar()
-        return
-      }
-    } catch (err) {
-      console.error(
-        'Erro ao consultar Pix Mercado Pago:',
-        err
-      )
-    }
-
-    if (attempts >= maxAttempts) {
-      clearInterval(timer)
-    }
-  }, 5000)
-}
-
-async function pagar() {
-  const amount = prompt('Valor do pagamento:')
-  const pixCode = prompt('Pix copia e cola:')
-
-  if (!amount || !pixCode) return
-
-  await api.post(
-    '/payments/manual',
-    {
-      amount,
-      pix: pixCode,
-      description: 'Pagamento Pix manual'
-    },
-    authHeaders()
-  )
-
-  await carregar()
-}
-
-async function sacar() {
-  const amount = prompt('Valor do saque:')
-  const pixKey = prompt('Chave Pix:')
-
-  if (!amount || !pixKey) return
-
-  try {
-    await api.post(
-      '/withdraw',
-      { amount, pixKey },
-      authHeaders()
-    )
-
-    alert('Saque registrado.')
-
-    await carregar()
-  } catch (err) {
-    alert(
-      err.response?.data?.error ||
-      'Erro ao sacar'
-    )
-  }
-}
-
-async function alterarSenha() {
-  const currentPassword = prompt('Senha atual:')
-  const newPassword = prompt('Nova senha:')
-
-  if (!currentPassword || !newPassword) return
-
-  try {
-    await api.post(
       '/auth/change-password',
       {
-        currentPassword,
-        newPassword
+        currentPassword: currentPassword.value,
+        newPassword: newPassword.value
       },
       authHeaders()
     )
 
+    if (data.token) {
+      localStorage.setItem('token', data.token)
+      token.value = data.token
+    }
+
+    cancelPasswordChange()
     alert('Senha alterada.')
   } catch (err) {
     alert(
@@ -889,85 +798,76 @@ async function alterarSenha() {
   }
 }
 
-async function criarOperador() {
-  await api.post(
-    '/users',
-    newUser.value,
-    authHeaders()
-  )
-
-  newUser.value = {
-    name: '',
-    email: '',
-    password: ''
+function clearSession(message = '') {
+  localStorage.removeItem('token')
+  token.value = null
+  wallet.value = {}
+  statement.value = []
+  treasury.value = emptyTreasury()
+  treasuryHistory.value = []
+  opening.value = {
+    capitalInitial: '',
+    balances: {
+      pagbank: '',
+      inter: '',
+      mercado_pago: '',
+      neon: '',
+      bradesco: '',
+      next: ''
+    }
   }
+  tab.value = 'dashboard'
+  password.value = ''
+  cancelPasswordChange()
 
-  await carregarOperadores()
-}
-
-async function creditar(user) {
-  const amount = prompt(
-    `Adicionar saldo para ${user.name}:`
-  )
-
-  if (!amount) return
-
-  await api.post(
-    `/admin/wallets/${user.id}/credit`,
-    {
-      amount,
-      description:
-        `Crédito admin para ${user.name}`
-    },
-    authHeaders()
-  )
-
-  await carregar()
-}
-
-async function debitar(user) {
-  const amount = prompt(
-    `Retirar saldo de ${user.name}:`
-  )
-
-  if (!amount) return
-
-  try {
-    await api.post(
-      `/admin/wallets/${user.id}/debit`,
-      {
-        amount,
-        description:
-          `Débito admin de ${user.name}`
-      },
-      authHeaders()
-    )
-
-    await carregar()
-  } catch (err) {
-    alert(
-      err.response?.data?.error ||
-      'Erro ao retirar saldo'
-    )
+  if (message) {
+    error.value = message
   }
 }
 
-async function toggle(user) {
-  await api.post(
-    `/admin/users/${user.id}/toggle`,
-    {},
-    authHeaders()
-  )
-
-  await carregarOperadores()
+function cancelPasswordChange() {
+  showPasswordChange.value = false
+  currentPassword.value = ''
+  newPassword.value = ''
+  newPasswordConfirmation.value = ''
 }
 
 function logout() {
-  localStorage.removeItem('token')
-  token.value = null
+  clearSession()
+  error.value = ''
 }
 
-if (token.value) {
-  carregar()
+function handleUnauthorized() {
+  clearSession('Sua sessão expirou. Entre novamente.')
 }
+
+onMounted(async () => {
+  window.addEventListener(
+    'corepay:unauthorized',
+    handleUnauthorized
+  )
+
+  if (!token.value) return
+
+  authLoading.value = true
+
+  try {
+    await carregar()
+  } catch (err) {
+    if (err.response?.status !== 401) {
+      clearSession(
+        'Não foi possível restaurar sua sessão.'
+      )
+    }
+  } finally {
+    authLoading.value = false
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener(
+    'corepay:unauthorized',
+    handleUnauthorized
+  )
+})
 </script>

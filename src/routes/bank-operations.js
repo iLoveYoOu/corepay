@@ -8,7 +8,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS bank_operation_days (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
-  company_id INTEGER,
+  company_id INTEGER NOT NULL,
   operation_date TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open',
   opening_total_cents INTEGER NOT NULL DEFAULT 0,
@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS bank_operation_days (
   amount_to_send_cents INTEGER NOT NULL DEFAULT 0,
   opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   closed_at TEXT,
-  UNIQUE(user_id, operation_date),
-  FOREIGN KEY (user_id) REFERENCES users(id)
+  UNIQUE(company_id, user_id, operation_date),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 
 CREATE TABLE IF NOT EXISTS bank_operation_accounts (
@@ -45,6 +46,11 @@ CREATE TABLE IF NOT EXISTS bank_operation_movements (
   type TEXT NOT NULL,
   amount_cents INTEGER NOT NULL,
   note TEXT,
+  idempotency_key TEXT,
+  reversed INTEGER NOT NULL DEFAULT 0,
+  reversed_at TEXT,
+  reversal_reason TEXT,
+  reversed_by INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (day_id) REFERENCES bank_operation_days(id),
   FOREIGN KEY (account_id) REFERENCES bank_operation_accounts(id),
@@ -54,11 +60,169 @@ CREATE TABLE IF NOT EXISTS bank_operation_movements (
 CREATE INDEX IF NOT EXISTS idx_bank_days_user
 ON bank_operation_days(user_id, operation_date);
 
+CREATE INDEX IF NOT EXISTS idx_bank_days_company_user
+ON bank_operation_days(company_id, user_id, operation_date);
+
 CREATE INDEX IF NOT EXISTS idx_bank_accounts_day
 ON bank_operation_accounts(day_id);
 
 CREATE INDEX IF NOT EXISTS idx_bank_movements_day
 ON bank_operation_movements(day_id, created_at);
+`);
+
+function columnExists(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some(item => item.name === column);
+}
+
+function hasLegacyBankDayUniqueConstraint() {
+  return db
+    .prepare(`PRAGMA index_list('bank_operation_days')`)
+    .all()
+    .filter(index => index.unique)
+    .some(index => {
+      const columns = db
+        .prepare(`
+          SELECT name
+          FROM pragma_index_info(?)
+          ORDER BY seqno
+        `)
+        .all(index.name)
+        .map(column => column.name);
+
+      return (
+        columns.length === 2 &&
+        columns[0] === 'user_id' &&
+        columns[1] === 'operation_date'
+      );
+    });
+}
+
+function migrateLegacyBankDayConstraint() {
+  if (!hasLegacyBankDayUniqueConstraint()) {
+    return;
+  }
+
+  db.pragma('foreign_keys = OFF');
+
+  try {
+    db.transaction(() => {
+      db.exec(`
+        DROP TABLE IF EXISTS bank_operation_days__migrated;
+
+        CREATE TABLE bank_operation_days__migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          company_id INTEGER NOT NULL,
+          operation_date TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          opening_total_cents INTEGER NOT NULL DEFAULT 0,
+          closing_total_cents INTEGER,
+          profit_total_cents INTEGER NOT NULL DEFAULT 0,
+          operator_share_cents INTEGER NOT NULL DEFAULT 0,
+          capital_replacement_cents INTEGER NOT NULL DEFAULT 0,
+          adjustments_cents INTEGER NOT NULL DEFAULT 0,
+          amount_to_send_cents INTEGER NOT NULL DEFAULT 0,
+          opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          closed_at TEXT,
+          UNIQUE(company_id, user_id, operation_date),
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (company_id) REFERENCES companies(id)
+        );
+
+        INSERT INTO bank_operation_days__migrated (
+          id,
+          user_id,
+          company_id,
+          operation_date,
+          status,
+          opening_total_cents,
+          closing_total_cents,
+          profit_total_cents,
+          operator_share_cents,
+          capital_replacement_cents,
+          adjustments_cents,
+          amount_to_send_cents,
+          opened_at,
+          closed_at
+        )
+        SELECT
+          id,
+          user_id,
+          company_id,
+          operation_date,
+          status,
+          opening_total_cents,
+          closing_total_cents,
+          profit_total_cents,
+          operator_share_cents,
+          capital_replacement_cents,
+          adjustments_cents,
+          amount_to_send_cents,
+          opened_at,
+          closed_at
+        FROM bank_operation_days;
+
+        DROP TABLE bank_operation_days;
+        ALTER TABLE bank_operation_days__migrated
+          RENAME TO bank_operation_days;
+      `);
+
+      const violations = db
+        .prepare('PRAGMA foreign_key_check')
+        .all();
+
+      if (violations.length) {
+        throw new Error(
+          'A migração das operações bancárias encontrou referências inválidas.'
+        );
+      }
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
+for (const [column, definition] of [
+  ['idempotency_key', 'TEXT'],
+  ['reversed', 'INTEGER NOT NULL DEFAULT 0'],
+  ['reversed_at', 'TEXT'],
+  ['reversal_reason', 'TEXT'],
+  ['reversed_by', 'INTEGER']
+]) {
+  if (!columnExists('bank_operation_movements', column)) {
+    db.exec(`
+      ALTER TABLE bank_operation_movements
+      ADD COLUMN ${column} ${definition}
+    `);
+  }
+}
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_movement_idempotency
+ON bank_operation_movements(day_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+`);
+
+db.prepare(`
+  UPDATE bank_operation_days
+  SET company_id = (
+    SELECT users.company_id
+    FROM users
+    WHERE users.id = bank_operation_days.user_id
+  )
+  WHERE company_id IS NULL
+`).run();
+
+migrateLegacyBankDayConstraint();
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_bank_days_user
+  ON bank_operation_days(user_id, operation_date);
+
+  CREATE INDEX IF NOT EXISTS idx_bank_days_company_user
+  ON bank_operation_days(company_id, user_id, operation_date);
 `);
 
 function operationDate() {
@@ -98,18 +262,24 @@ function operationDate() {
 function toCents(value, allowNegative = false) {
   let text = String(value ?? '').trim();
 
+  if (!text) return null;
+
   if (text.includes(',') && text.includes('.')) {
     text = text.replace(/\./g, '').replace(',', '.');
-  } else {
+  } else if (text.includes(',')) {
     text = text.replace(',', '.');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(text)) {
+    text = text.replace(/\./g, '');
   }
 
   const number = Number(text);
+  const cents = Math.round(number * 100);
 
   if (!Number.isFinite(number)) return null;
+  if (!Number.isSafeInteger(cents)) return null;
   if (!allowNegative && number < 0) return null;
 
-  return Math.round(number * 100);
+  return cents;
 }
 
 function money(cents) {
@@ -120,8 +290,14 @@ function ownedDay(req, id) {
   return db.prepare(`
     SELECT *
     FROM bank_operation_days
-    WHERE id = ? AND user_id = ?
-  `).get(Number(id), req.user.id);
+    WHERE id = ?
+      AND user_id = ?
+      AND company_id = ?
+  `).get(
+    Number(id),
+    req.user.id,
+    req.user.companyId
+  );
 }
 
 function serialize(req, day) {
@@ -166,11 +342,11 @@ function serialize(req, day) {
   );
 
   const entries = movements
-    .filter(item => item.type === 'entry')
+    .filter(item => item.type === 'entry' && !item.reversed)
     .reduce((sum, item) => sum + item.amount_cents, 0);
 
   const exits = movements
-    .filter(item => item.type === 'exit')
+    .filter(item => item.type === 'exit' && !item.reversed)
     .reduce((sum, item) => sum + item.amount_cents, 0);
 
   return {
@@ -196,6 +372,7 @@ function serialize(req, day) {
     })),
     movements: movements.map(item => ({
       ...item,
+      reversed: Boolean(item.reversed),
       amount: money(item.amount_cents)
     })),
     totals: {
@@ -211,8 +388,27 @@ router.get('/today', auth, (req, res) => {
   const day = db.prepare(`
     SELECT *
     FROM bank_operation_days
-    WHERE user_id = ? AND operation_date = ?
-  `).get(req.user.id, operationDate());
+    WHERE user_id = ?
+      AND company_id = ?
+      AND operation_date = ?
+  `).get(
+    req.user.id,
+    req.user.companyId,
+    operationDate()
+  );
+
+  return res.json(serialize(req, day));
+});
+
+router.get('/days/:dayId', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia operacional não encontrado.'
+    });
+  }
 
   return res.json(serialize(req, day));
 });
@@ -260,8 +456,10 @@ router.post('/open', auth, (req, res) => {
   const existing = db.prepare(`
     SELECT id
     FROM bank_operation_days
-    WHERE user_id = ? AND operation_date = ?
-  `).get(req.user.id, date);
+    WHERE user_id = ?
+      AND company_id = ?
+      AND operation_date = ?
+  `).get(req.user.id, req.user.companyId, date);
 
   if (existing) {
     return res.status(409).json({
@@ -286,7 +484,7 @@ router.post('/open', auth, (req, res) => {
       VALUES (?, ?, ?, ?)
     `).run(
       req.user.id,
-      req.user.companyId || null,
+      req.user.companyId,
       date,
       openingTotal
     );
@@ -395,6 +593,11 @@ router.post('/days/:dayId/movements', auth, (req, res) => {
   const type = String(req.body.type || '');
   const amount = toCents(req.body.amount);
   const note = String(req.body.note || '').trim();
+  const idempotencyKey = String(
+    req.get('Idempotency-Key') ||
+    req.body.idempotencyKey ||
+    ''
+  ).trim().slice(0, 120) || null;
 
   if (
     !account ||
@@ -408,47 +611,185 @@ router.post('/days/:dayId/movements', auth, (req, res) => {
     });
   }
 
-  const delta = type === 'entry' ? amount : -amount;
-  const nextBalance = account.current_balance_cents + delta;
-
-  if (nextBalance < 0) {
+  if (
+    (type === 'entry' && account.purpose === 'pay') ||
+    (type === 'exit' && account.purpose === 'receive')
+  ) {
     return res.status(400).json({
       ok: false,
-      error: 'O saldo do banco não pode ficar negativo.'
+      error:
+        type === 'entry'
+          ? 'Este banco foi configurado somente para pagamentos.'
+          : 'Este banco foi configurado somente para recebimentos.'
     });
   }
 
-  db.transaction(() => {
-    db.prepare(`
-      UPDATE bank_operation_accounts
-      SET current_balance_cents = ?
-      WHERE id = ?
-    `).run(nextBalance, account.id);
+  if (idempotencyKey) {
+    const duplicate = db.prepare(`
+      SELECT id
+      FROM bank_operation_movements
+      WHERE day_id = ? AND idempotency_key = ?
+    `).get(day.id, idempotencyKey);
 
-    db.prepare(`
-      INSERT INTO bank_operation_movements (
-        day_id,
-        account_id,
-        user_id,
+    if (duplicate) {
+      return res.json(serialize(req, ownedDay(req, day.id)));
+    }
+  }
+
+  try {
+    db.transaction(() => {
+      const currentAccount = db.prepare(`
+        SELECT *
+        FROM bank_operation_accounts
+        WHERE id = ? AND day_id = ? AND active = 1
+      `).get(account.id, day.id);
+
+      if (!currentAccount) {
+        throw new Error('Banco não encontrado.');
+      }
+
+      const currentDelta = type === 'entry'
+        ? amount
+        : -amount;
+      const finalBalance =
+        currentAccount.current_balance_cents + currentDelta;
+
+      if (finalBalance < 0) {
+        throw new Error(
+          'O saldo do banco não pode ficar negativo.'
+        );
+      }
+
+      db.prepare(`
+        UPDATE bank_operation_accounts
+        SET current_balance_cents = ?
+        WHERE id = ?
+      `).run(finalBalance, currentAccount.id);
+
+      db.prepare(`
+        INSERT INTO bank_operation_movements (
+          day_id,
+          account_id,
+          user_id,
+          type,
+          amount_cents,
+          note,
+          idempotency_key
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        day.id,
+        currentAccount.id,
+        req.user.id,
         type,
-        amount_cents,
-        note
-      )
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      day.id,
-      account.id,
-      req.user.id,
-      type,
-      amount,
-      note || null
-    );
-  })();
+        amount,
+        note || null,
+        idempotencyKey
+      );
+    }).immediate();
+  } catch (error) {
+    if (
+      idempotencyKey &&
+      error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+    ) {
+      return res.json(serialize(req, ownedDay(req, day.id)));
+    }
+
+    return res.status(400).json({
+      ok: false,
+      error: error.message
+    });
+  }
 
   return res.status(201).json(
     serialize(req, ownedDay(req, day.id))
   );
 });
+
+router.post(
+  '/days/:dayId/movements/:movementId/reverse',
+  auth,
+  (req, res) => {
+    const day = ownedDay(req, req.params.dayId);
+
+    if (!day || day.status !== 'open') {
+      return res.status(404).json({
+        ok: false,
+        error: 'Dia aberto não encontrado.'
+      });
+    }
+
+    const reason = String(req.body.reason || '').trim();
+
+    if (reason.length < 3) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Informe o motivo do estorno.'
+      });
+    }
+
+    try {
+      db.transaction(() => {
+        const movement = db.prepare(`
+          SELECT *
+          FROM bank_operation_movements
+          WHERE id = ? AND day_id = ?
+        `).get(Number(req.params.movementId), day.id);
+
+        if (!movement) {
+          throw new Error('Movimentação não encontrada.');
+        }
+
+        if (movement.reversed) {
+          throw new Error('Esta movimentação já foi estornada.');
+        }
+
+        const account = db.prepare(`
+          SELECT *
+          FROM bank_operation_accounts
+          WHERE id = ? AND day_id = ? AND active = 1
+        `).get(movement.account_id, day.id);
+
+        if (!account) {
+          throw new Error('Banco da movimentação não encontrado.');
+        }
+
+        const delta = movement.type === 'entry'
+          ? -movement.amount_cents
+          : movement.amount_cents;
+        const nextBalance = account.current_balance_cents + delta;
+
+        if (nextBalance < 0) {
+          throw new Error(
+            'O estorno deixaria o saldo do banco negativo.'
+          );
+        }
+
+        db.prepare(`
+          UPDATE bank_operation_accounts
+          SET current_balance_cents = ?
+          WHERE id = ?
+        `).run(nextBalance, account.id);
+
+        db.prepare(`
+          UPDATE bank_operation_movements
+          SET reversed = 1,
+              reversed_at = CURRENT_TIMESTAMP,
+              reversal_reason = ?,
+              reversed_by = ?
+          WHERE id = ? AND reversed = 0
+        `).run(reason, req.user.id, movement.id);
+      })();
+
+      return res.json(serialize(req, ownedDay(req, day.id)));
+    } catch (error) {
+      return res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+  }
+);
 
 router.post('/days/:dayId/close', auth, (req, res) => {
   const day = ownedDay(req, req.params.dayId);
@@ -563,9 +904,10 @@ router.get('/history', auth, (req, res) => {
     SELECT *
     FROM bank_operation_days
     WHERE user_id = ?
+      AND company_id = ?
     ORDER BY operation_date DESC, id DESC
     LIMIT ?
-  `).all(req.user.id, limit);
+  `).all(req.user.id, req.user.companyId, limit);
 
   return res.json({
     ok: true,

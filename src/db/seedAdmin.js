@@ -14,6 +14,10 @@ function seedAdmin() {
     process.env.ADMIN_NAME || 'Administrador'
   ).trim();
 
+  const forceSync = String(
+    process.env.ADMIN_FORCE_SYNC || ''
+  ).trim().toLowerCase() === 'true';
+
   if (!email || !password) {
     console.log(
       'ADMIN_EMAIL/ADMIN_PASSWORD não configurados.'
@@ -34,11 +38,6 @@ function seedAdmin() {
     );
   }
 
-  const passwordHash = bcrypt.hashSync(
-    password,
-    10
-  );
-
   const existing = db.prepare(`
     SELECT *
     FROM users
@@ -50,27 +49,44 @@ function seedAdmin() {
   if (existing) {
     userId = existing.id;
 
-    db.prepare(`
-      UPDATE users
-      SET
-        name = ?,
-        password_hash = ?,
-        role = 'super_admin',
-        active = 1,
-        company_id = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(
-      name,
-      passwordHash,
-      company.id,
-      existing.id
+    if (forceSync) {
+      const passwordHash = bcrypt.hashSync(
+        password,
+        10
+      );
+
+      db.prepare(`
+        UPDATE users
+        SET
+          name = ?,
+          password_hash = ?,
+          role = 'super_admin',
+          active = 1,
+          company_id = ?,
+          session_version = session_version + 1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        name,
+        passwordHash,
+        company.id,
+        existing.id
+      );
+
+      console.log(
+        'Super Admin sincronizado pelo ENV.'
+      );
+    } else {
+      console.log(
+        'Super Admin existente preservado. Use ADMIN_FORCE_SYNC=true para sincronizar.'
+      );
+    }
+  } else {
+    const passwordHash = bcrypt.hashSync(
+      password,
+      10
     );
 
-    console.log(
-      'Super Admin atualizado pelo ENV.'
-    );
-  } else {
     const result = db.prepare(`
       INSERT INTO users (
         name,

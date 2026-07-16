@@ -1,29 +1,34 @@
-$Core = "C:\Users\arthu\OneDrive\Área de Trabalho\CorePay"
-$Dash = "C:\Users\arthu\OneDrive\Área de Trabalho\CorePay\dashboard"
+$Core = $PSScriptRoot
+$Dash = Join-Path $Core 'dashboard'
 
-function PortaAberta($porta) {
-  $c = Get-NetTCPConnection -LocalPort $porta -State Listen -ErrorAction SilentlyContinue
-  return $null -ne $c
+function Testar-Porta($porta) {
+  $conexao = Get-NetTCPConnection `
+    -LocalPort $porta `
+    -State Listen `
+    -ErrorAction SilentlyContinue
+
+  return $null -ne $conexao
 }
 
-Write-Host "Verificando CorePay..." -ForegroundColor Cyan
+Write-Host 'Verificando CorePay...' -ForegroundColor Cyan
 
-if (PortaAberta 4000) {
-  Write-Host "Backend já está rodando na porta 4000" -ForegroundColor Green
+if (Testar-Porta 4000) {
+  Write-Host 'Backend já está rodando na porta 4000.' -ForegroundColor Green
 } else {
-  Write-Host "Iniciando Backend..." -ForegroundColor Yellow
-  Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Core'; npm run dev"
-  Start-Sleep -Seconds 3
+  Write-Host 'Iniciando backend...' -ForegroundColor Yellow
+  Start-Process `
+    -FilePath 'powershell.exe' `
+    -ArgumentList '-NoExit', '-Command', "Set-Location -LiteralPath '$Core'; npm run dev"
 }
 
-if (PortaAberta 5173) {
-  Write-Host "Frontend já está rodando na porta 5173" -ForegroundColor Green
+if (Testar-Porta 5173) {
+  Write-Host 'Frontend já está rodando na porta 5173.' -ForegroundColor Green
 } else {
-  Write-Host "Iniciando Frontend..." -ForegroundColor Yellow
-  Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Dash'; npm run dev"
-  Start-Sleep -Seconds 3
+  Write-Host 'Iniciando frontend...' -ForegroundColor Yellow
+  Start-Process `
+    -FilePath 'powershell.exe' `
+    -ArgumentList '-NoExit', '-Command', "Set-Location -LiteralPath '$Dash'; npm run dev"
 }
 
-Start-Process "http://localhost:5173"
-
-Write-Host "CorePay iniciado." -ForegroundColor Green
+Start-Process 'http://localhost:5173'
+Write-Host 'CorePay iniciado.' -ForegroundColor Green

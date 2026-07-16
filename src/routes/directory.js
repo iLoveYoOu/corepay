@@ -249,6 +249,13 @@ router.patch(
       WHERE id = ?
     `).run(active, company.id);
 
+    db.prepare(`
+      UPDATE users
+      SET session_version = session_version + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE company_id = ?
+    `).run(company.id);
+
     audit(req, {
       companyId: company.id,
       action: active
@@ -331,11 +338,11 @@ router.post(
     const requestedCompanyId =
       Number(req.body.companyId);
 
-    if (!name || !email || password.length < 6) {
+    if (!name || !email || password.length < 8) {
       return res.status(400).json({
         ok: false,
         error:
-          'Informe nome, e-mail e senha com pelo menos 6 caracteres.'
+          'Informe nome, e-mail e senha com pelo menos 8 caracteres.'
       });
     }
 
@@ -385,42 +392,48 @@ router.post(
     try {
       const hash = bcrypt.hashSync(password, 10);
 
-      const result = db.prepare(`
-        INSERT INTO users (
+      const createUser = db.transaction(() => {
+        const result = db.prepare(`
+          INSERT INTO users (
+            name,
+            email,
+            password_hash,
+            role,
+            active,
+            company_id,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+        `).run(
           name,
           email,
-          password_hash,
+          hash,
           role,
-          active,
-          company_id,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
-      `).run(
-        name,
-        email,
-        hash,
-        role,
-        companyId
-      );
+          companyId
+        );
 
-      const userId = Number(result.lastInsertRowid);
+        const userId = Number(result.lastInsertRowid);
 
-      db.prepare(`
-        INSERT INTO wallets (user_id, balance_cents)
-        VALUES (?, 0)
-      `).run(userId);
+        db.prepare(`
+          INSERT INTO wallets (user_id, balance_cents)
+          VALUES (?, 0)
+        `).run(userId);
 
-      audit(req, {
-        companyId,
-        targetUserId: userId,
-        action: 'USER_CREATED',
-        details: {
-          name,
-          email,
-          role
-        }
+        audit(req, {
+          companyId,
+          targetUserId: userId,
+          action: 'USER_CREATED',
+          details: {
+            name,
+            email,
+            role
+          }
+        });
+
+        return userId;
       });
+
+      const userId = createUser();
 
       return res.status(201).json({
         ok: true,
@@ -494,6 +507,7 @@ router.patch(
             email = ?,
             role = ?,
             company_id = ?,
+            session_version = session_version + 1,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
@@ -550,11 +564,11 @@ router.post(
       req.body.password || ''
     );
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       return res.status(400).json({
         ok: false,
         error:
-          'A nova senha deve ter pelo menos 6 caracteres.'
+          'A nova senha deve ter pelo menos 8 caracteres.'
       });
     }
 
@@ -563,6 +577,7 @@ router.post(
     db.prepare(`
       UPDATE users
       SET password_hash = ?,
+          session_version = session_version + 1,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(hash, target.id);
@@ -600,6 +615,7 @@ router.patch(
     db.prepare(`
       UPDATE users
       SET active = ?,
+          session_version = session_version + 1,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(active, target.id);
@@ -669,9 +685,15 @@ router.get(
       ok: true,
       logs: logs.map(log => ({
         ...log,
-        details: log.details
-          ? JSON.parse(log.details)
-          : null
+        details: (() => {
+          if (!log.details) return null;
+
+          try {
+            return JSON.parse(log.details);
+          } catch {
+            return { raw: log.details };
+          }
+        })()
       }))
     });
   }

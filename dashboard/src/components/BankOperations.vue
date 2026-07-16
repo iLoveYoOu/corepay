@@ -11,10 +11,17 @@
       </div>
 
       <div class="hero-actions">
-        <button class="blue" @click="load">Atualizar</button>
+        <button
+          class="blue"
+          :disabled="refreshing || actionBusy"
+          @click="load"
+        >
+          {{ refreshing ? 'Atualizando...' : 'Atualizar' }}
+        </button>
         <button
           v-if="state.day?.status === 'open'"
           class="orange"
+          :disabled="actionBusy"
           @click="showClose = !showClose"
         >
           Fechar dia
@@ -86,6 +93,7 @@
             v-if="draftAccounts.length > 1"
             class="icon danger"
             title="Remover banco"
+            :disabled="actionBusy"
             @click="draftAccounts.splice(index, 1)"
           >
             ×
@@ -100,8 +108,20 @@
         </div>
 
         <div class="button-row">
-          <button class="soft" @click="addDraft">+ Adicionar banco</button>
-          <button class="blue" @click="openDay">Iniciar operação</button>
+          <button
+            class="soft"
+            :disabled="actionBusy"
+            @click="addDraft"
+          >
+            + Adicionar banco
+          </button>
+          <button
+            class="blue"
+            :disabled="actionBusy"
+            @click="openDay"
+          >
+            {{ pendingAction === 'open' ? 'Iniciando...' : 'Iniciar operação' }}
+          </button>
         </div>
       </div>
     </section>
@@ -172,6 +192,7 @@
           <input
             v-model="closing.profitTotal"
             inputmode="decimal"
+            required
             placeholder="0,00"
           />
         </label>
@@ -190,8 +211,12 @@
           <strong>{{ money(closePreview) }}</strong>
         </div>
 
-        <button class="orange" @click="closeDay">
-          Confirmar fechamento
+        <button
+          class="orange"
+          :disabled="actionBusy || !profitFilled"
+          @click="closeDay"
+        >
+          {{ pendingAction === 'close' ? 'Fechando...' : 'Confirmar fechamento' }}
         </button>
       </section>
 
@@ -204,6 +229,7 @@
         <button
           v-if="state.day.status === 'open'"
           class="soft"
+          :disabled="actionBusy"
           @click="showNewBank = !showNewBank"
         >
           + Adicionar banco
@@ -226,7 +252,13 @@
           placeholder="Saldo inicial"
         />
         <input v-model="newBank.pixKey" placeholder="Chave Pix opcional" />
-        <button class="blue" @click="addBank">Salvar banco</button>
+        <button
+          class="blue"
+          :disabled="actionBusy"
+          @click="addBank"
+        >
+          {{ pendingAction === 'bank' ? 'Salvando...' : 'Salvar banco' }}
+        </button>
       </section>
 
       <section class="bank-grid">
@@ -262,17 +294,28 @@
             v-if="state.day.status === 'open'"
             class="bank-actions"
           >
-            <button class="green-button" @click="move(account, 'entry')">
+            <button
+              v-if="account.purpose !== 'pay'"
+              class="green-button"
+              :disabled="actionBusy"
+              @click="move(account, 'entry')"
+            >
               + Recebi
             </button>
-            <button class="orange" @click="move(account, 'exit')">
+            <button
+              v-if="account.purpose !== 'receive'"
+              class="orange"
+              :disabled="actionBusy"
+              @click="move(account, 'exit')"
+            >
               − Paguei
             </button>
           </div>
 
           <button
-            v-if="account.pix_key"
+            v-if="account.pix_key && account.purpose !== 'pay'"
             class="pix-button"
+            :disabled="actionBusy"
             @click="generatePix(account)"
           >
             Gerar Pix sem valor
@@ -300,8 +343,12 @@
           <input v-model="pix.merchantCity" placeholder="Ex.: SAO PAULO" />
         </label>
 
-        <button class="blue" @click="createPixPayload">
-          Gerar copia e cola
+        <button
+          class="blue"
+          :disabled="actionBusy"
+          @click="createPixPayload"
+        >
+          {{ pendingAction === 'pix' ? 'Gerando...' : 'Gerar copia e cola' }}
         </button>
 
         <textarea
@@ -339,25 +386,49 @@
                 <th>Movimento</th>
                 <th>Valor</th>
                 <th>Observação</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
               <tr
                 v-for="movement in state.movements"
                 :key="movement.id"
+                :class="{ 'reversed-row': movement.reversed }"
               >
                 <td>{{ formatDate(movement.created_at) }}</td>
                 <td>{{ movement.account_name }}</td>
                 <td>
                   <span :class="['movement', movement.type]">
-                    {{ movement.type === 'entry' ? 'Entrada' : 'Saída' }}
+                    {{
+                      movement.reversed
+                        ? 'Estornada'
+                        : movement.type === 'entry'
+                          ? 'Entrada'
+                          : 'Saída'
+                    }}
                   </span>
                 </td>
                 <td>{{ money(movement.amount) }}</td>
-                <td>{{ movement.note || '—' }}</td>
+                <td>
+                  {{ movement.note || '—' }}
+                  <small v-if="movement.reversed" class="reversal-note">
+                    Motivo: {{ movement.reversal_reason }}
+                  </small>
+                </td>
+                <td>
+                  <button
+                    v-if="state.day.status === 'open' && !movement.reversed"
+                    class="danger compact-button"
+                    :disabled="actionBusy"
+                    @click="reverseMovement(movement)"
+                  >
+                    Estornar
+                  </button>
+                  <span v-else>—</span>
+                </td>
               </tr>
               <tr v-if="!state.movements.length">
-                <td colspan="5" class="empty-row">
+                <td colspan="6" class="empty-row">
                   Nenhuma movimentação registrada.
                 </td>
               </tr>
@@ -366,55 +437,68 @@
         </div>
       </section>
 
-      <section class="panel history-panel">
-        <div class="section-title">
-          <div>
-            <span class="eyebrow">HISTÓRICO</span>
-            <h2>Fechamentos anteriores</h2>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Operação</th>
-                <th>Status</th>
-                <th>Inicial</th>
-                <th>Final</th>
-                <th>Lucro</th>
-                <th>Lucão deve enviar</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="day in state.history" :key="day.id">
-                <td>{{ day.operationDate }}</td>
-                <td>
-                  <span :class="['movement', day.status === 'closed' ? 'entry' : 'exit']">
-                    {{ day.status === 'closed' ? 'Fechado' : 'Aberto' }}
-                  </span>
-                </td>
-                <td>{{ money(day.openingTotal) }}</td>
-                <td>
-                  {{
-                    day.closingTotal == null
-                      ? '—'
-                      : money(day.closingTotal)
-                  }}
-                </td>
-                <td>{{ money(day.profitTotal) }}</td>
-                <td><strong>{{ money(day.amountToSend) }}</strong></td>
-              </tr>
-              <tr v-if="!state.history.length">
-                <td colspan="6" class="empty-row">
-                  Nenhum fechamento anterior.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
     </template>
+
+    <section v-if="!loading" class="panel history-panel">
+      <div class="section-title">
+        <div>
+          <span class="eyebrow">HISTÓRICO</span>
+          <h2>Fechamentos anteriores</h2>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Operação</th>
+              <th>Status</th>
+              <th>Inicial</th>
+              <th>Final</th>
+              <th>Lucro</th>
+              <th>Lucão deve enviar</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="day in state.history" :key="day.id">
+              <td>{{ day.operationDate }}</td>
+              <td>
+                <span :class="['movement', day.status === 'closed' ? 'entry' : 'exit']">
+                  {{ day.status === 'closed' ? 'Fechado' : 'Aberto' }}
+                </span>
+              </td>
+              <td>{{ money(day.openingTotal) }}</td>
+              <td>
+                {{
+                  day.closingTotal == null
+                    ? '—'
+                    : money(day.closingTotal)
+                }}
+              </td>
+              <td>{{ money(day.profitTotal) }}</td>
+              <td><strong>{{ money(day.amountToSend) }}</strong></td>
+              <td>
+                <button
+                  v-if="day.status === 'open'"
+                  class="orange compact-button"
+                  :disabled="actionBusy"
+                  @click="resumeDay(day)"
+                >
+                  Retomar
+                </button>
+                <span v-else>—</span>
+              </td>
+            </tr>
+            <tr v-if="!state.history.length">
+              <td colspan="7" class="empty-row">
+                Nenhum fechamento anterior.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -423,6 +507,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api, authHeaders } from '../services/api'
 
 const loading = ref(true)
+const refreshing = ref(false)
+const pendingAction = ref('')
 const showClose = ref(false)
 const showNewBank = ref(false)
 
@@ -470,17 +556,81 @@ const pix = reactive({
   payload: ''
 })
 
-function numberValue(value) {
-  let text = String(value || '').trim()
+const movementAttempt = reactive({
+  fingerprint: '',
+  key: ''
+})
 
-  if (text.includes(',') && text.includes('.')) {
-    text = text.replace(/\./g, '').replace(',', '.')
-  } else {
-    text = text.replace(',', '.')
+function uniqueKey() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
   }
 
-  return Number(text) || 0
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
+
+function emptyAccount() {
+  return {
+    name: '',
+    purpose: 'both',
+    openingBalance: '',
+    pixKey: ''
+  }
+}
+
+function parsedNumber(value) {
+  let text = String(value ?? '')
+    .trim()
+    .replace(/\s/g, '')
+    .replace(/^R\$/i, '')
+
+  if (!text) return 0
+  if (!/^-?[\d.,]+$/.test(text)) return Number.NaN
+
+  const sign = text.startsWith('-') ? '-' : ''
+  text = text.replace('-', '')
+
+  if (text.includes(',')) {
+    const commaParts = text.split(',')
+
+    if (commaParts.length > 2) return Number.NaN
+
+    const integer = commaParts[0].replace(/\./g, '') || '0'
+    const decimal = commaParts[1] || ''
+    text = `${integer}.${decimal}`
+  } else if (text.includes('.')) {
+    const dotParts = text.split('.')
+    const thousands =
+      dotParts.length > 2
+        ? dotParts.slice(1).every(part => part.length === 3)
+        : dotParts[1]?.length === 3
+
+    if (thousands) {
+      text = dotParts.join('')
+    } else if (dotParts.length > 2) {
+      return Number.NaN
+    }
+  }
+
+  const number = Number(sign + text)
+  return Number.isFinite(number) ? number : Number.NaN
+}
+
+function numberValue(value) {
+  const number = parsedNumber(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const actionBusy = computed(() => Boolean(pendingAction.value))
+const profitFilled = computed(() => {
+  const profit = parsedNumber(closing.profitTotal)
+
+  return (
+    String(closing.profitTotal ?? '').trim() !== '' &&
+    Number.isFinite(profit) &&
+    profit >= 0
+  )
+})
 
 const draftTotal = computed(() =>
   draftAccounts.reduce(
@@ -490,11 +640,15 @@ const draftTotal = computed(() =>
 )
 
 const entryCount = computed(() =>
-  state.movements.filter(item => item.type === 'entry').length
+  state.movements.filter(
+    item => item.type === 'entry' && !item.reversed
+  ).length
 )
 
 const exitCount = computed(() =>
-  state.movements.filter(item => item.type === 'exit').length
+  state.movements.filter(
+    item => item.type === 'exit' && !item.reversed
+  ).length
 )
 
 const closePreview = computed(() => {
@@ -538,7 +692,48 @@ function formatDate(value) {
   })
 }
 
+function resetClosing() {
+  Object.assign(closing, {
+    profitTotal: '',
+    adjustments: ''
+  })
+  showClose.value = false
+}
+
+function resetTransientState() {
+  draftAccounts.splice(
+    0,
+    draftAccounts.length,
+    emptyAccount()
+  )
+  Object.assign(newBank, emptyAccount())
+  resetClosing()
+  showNewBank.value = false
+  Object.assign(pix, {
+    show: false,
+    bankName: '',
+    pixKey: '',
+    merchantName: '',
+    merchantCity: '',
+    payload: ''
+  })
+}
+
 function apply(data) {
+  const previousDate = state.operationDate
+  const previousDayId = state.day?.id || null
+  const nextDayId = data.day?.id || null
+  const operationChanged =
+    Boolean(previousDate) &&
+    previousDate !== data.operationDate
+  const dayChanged =
+    previousDayId !== nextDayId &&
+    (previousDayId !== null || nextDayId !== null)
+
+  if (operationChanged || dayChanged) {
+    resetTransientState()
+  }
+
   state.operationDate = data.operationDate
   state.day = data.day
   state.accounts = data.accounts || []
@@ -547,6 +742,9 @@ function apply(data) {
 }
 
 async function load() {
+  if (refreshing.value) return
+
+  refreshing.value = true
   loading.value = true
 
   try {
@@ -571,19 +769,19 @@ async function load() {
     )
   } finally {
     loading.value = false
+    refreshing.value = false
   }
 }
 
 function addDraft() {
-  draftAccounts.push({
-    name: '',
-    purpose: 'both',
-    openingBalance: '',
-    pixKey: ''
-  })
+  if (actionBusy.value) return
+  draftAccounts.push(emptyAccount())
 }
 
 async function openDay() {
+  if (actionBusy.value) return
+  pendingAction.value = 'open'
+
   try {
     const { data } = await api.post(
       '/bank-operations/open',
@@ -597,10 +795,15 @@ async function openDay() {
       error.response?.data?.error ||
       'Não foi possível iniciar o dia.'
     )
+  } finally {
+    pendingAction.value = ''
   }
 }
 
 async function addBank() {
+  if (actionBusy.value) return
+  pendingAction.value = 'bank'
+
   try {
     const { data } = await api.post(
       `/bank-operations/days/${state.day.id}/accounts`,
@@ -621,10 +824,14 @@ async function addBank() {
       error.response?.data?.error ||
       'Não foi possível adicionar o banco.'
     )
+  } finally {
+    pendingAction.value = ''
   }
 }
 
 async function move(account, type) {
+  if (actionBusy.value) return
+
   const label = type === 'entry' ? 'recebido' : 'pago'
   const amount = prompt(`Valor ${label} em ${account.name}:`)
 
@@ -634,6 +841,21 @@ async function move(account, type) {
     'Cliente, banca ou observação (opcional):'
   ) || ''
 
+  const fingerprint = JSON.stringify({
+    dayId: state.day.id,
+    accountId: account.id,
+    type,
+    amount,
+    note
+  })
+
+  if (movementAttempt.fingerprint !== fingerprint) {
+    movementAttempt.fingerprint = fingerprint
+    movementAttempt.key = uniqueKey()
+  }
+
+  pendingAction.value = `movement-${account.id}`
+
   try {
     const { data } = await api.post(
       `/bank-operations/days/${state.day.id}/movements`,
@@ -641,24 +863,43 @@ async function move(account, type) {
         accountId: account.id,
         type,
         amount,
-        note
+        note,
+        idempotencyKey: movementAttempt.key
       },
       authHeaders()
     )
 
     apply(data)
+    movementAttempt.fingerprint = ''
+    movementAttempt.key = ''
   } catch (error) {
+    if (error.response) {
+      movementAttempt.fingerprint = ''
+      movementAttempt.key = ''
+    }
+
     alert(
       error.response?.data?.error ||
       'Não foi possível registrar a movimentação.'
     )
+  } finally {
+    pendingAction.value = ''
   }
 }
 
 async function closeDay() {
+  if (actionBusy.value) return
+
+  if (!profitFilled.value) {
+    alert('Informe o lucro total antes de fechar o dia.')
+    return
+  }
+
   if (!confirm('Confirma o fechamento definitivo deste dia?')) {
     return
   }
+
+  pendingAction.value = 'close'
 
   try {
     const { data } = await api.post(
@@ -675,12 +916,66 @@ async function closeDay() {
     )
 
     state.history = historyResponse.data.days || []
-    showClose.value = false
+    resetClosing()
   } catch (error) {
     alert(
       error.response?.data?.error ||
       'Não foi possível fechar o dia.'
     )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+async function reverseMovement(movement) {
+  if (actionBusy.value || movement.reversed) return
+
+  const reason = prompt(
+    `Motivo do estorno de ${money(movement.amount)} em ${movement.account_name}:`
+  )
+
+  if (!reason) return
+
+  pendingAction.value = `reverse-${movement.id}`
+
+  try {
+    const { data } = await api.post(
+      `/bank-operations/days/${state.day.id}/movements/${movement.id}/reverse`,
+      { reason },
+      authHeaders()
+    )
+
+    apply(data)
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível estornar a movimentação.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+async function resumeDay(day) {
+  if (actionBusy.value) return
+
+  pendingAction.value = `resume-${day.id}`
+
+  try {
+    const { data } = await api.get(
+      `/bank-operations/days/${day.id}`,
+      authHeaders()
+    )
+
+    apply(data)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível abrir este dia.'
+    )
+  } finally {
+    pendingAction.value = ''
   }
 }
 
@@ -694,6 +989,9 @@ function generatePix(account) {
 }
 
 async function createPixPayload() {
+  if (actionBusy.value) return
+  pendingAction.value = 'pix'
+
   try {
     const { data } = await api.post(
       '/bank-operations/pix-static',
@@ -711,6 +1009,8 @@ async function createPixPayload() {
       error.response?.data?.error ||
       'Não foi possível gerar o Pix.'
     )
+  } finally {
+    pendingAction.value = ''
   }
 }
 
@@ -747,7 +1047,7 @@ onMounted(load)
   align-items:center;
   box-shadow:0 16px 40px #5554b832;
 }
-.hero h1{font-size:34px;margin:5px 0 8px}
+.hero h1{font-size:34px;margin:5px 0 8px;color:white}
 .hero p{max-width:720px;margin:0;color:#eef0ff;line-height:1.5}
 .hero-actions,.button-row,.bank-actions{display:flex;gap:10px;flex-wrap:wrap}
 .eyebrow{font-size:12px;font-weight:800;letter-spacing:.12em}
@@ -814,6 +1114,7 @@ button{
   box-shadow:0 7px 17px #263a6418;
 }
 button:hover{transform:translateY(-1px)}
+button:disabled:hover{transform:none}
 .blue{background:var(--blue)}
 .orange{background:var(--orange)}
 .danger{background:var(--red)}
@@ -872,13 +1173,17 @@ th{font-size:12px;color:var(--muted)}
 .movement{padding:6px 9px;border-radius:999px;font-size:12px;font-weight:800}
 .movement.entry{background:#ddf8e8;color:#188a4a}
 .movement.exit{background:#fff0e3;color:#ce650f}
+.reversed-row{opacity:.68;background:#fff4f4}
+.reversed-row td:nth-child(4){text-decoration:line-through}
+.reversal-note{display:block;margin-top:4px;color:#b12e36}
+.compact-button{padding:7px 10px;font-size:12px}
 .table-wrap{overflow:auto}
 .empty,.empty-row{text-align:center;color:var(--muted);padding:35px}
 @media(max-width:1000px){
   .summary-grid{grid-template-columns:repeat(2,1fr)}
   .bank-grid{grid-template-columns:repeat(2,1fr)}
   .draft-card,.close-panel,.new-bank,.pix-panel{grid-template-columns:1fr 1fr}
-  .draft-number,.icon{display:none}
+  .draft-number{display:none}
   .closing-result{grid-template-columns:1fr 1fr}
 }
 @media(max-width:640px){

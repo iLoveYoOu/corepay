@@ -47,6 +47,8 @@
         <input
           v-model="form.password"
           type="password"
+          autocomplete="new-password"
+          minlength="8"
           placeholder="Senha"
         />
 
@@ -114,18 +116,23 @@
               {{ formatDate(user.last_login_at) }}
             </td>
             <td>
-              <button @click="editUser(user)">
+              <button
+                v-if="user.id !== me.id"
+                @click="editUser(user)"
+              >
                 Editar
               </button>
 
               <button
+                v-if="user.id !== me.id"
                 class="orange"
-                @click="resetPassword(user)"
+                @click="openPasswordReset(user)"
               >
                 Senha
               </button>
 
               <button
+                v-if="user.id !== me.id"
                 class="danger"
                 @click="toggleUser(user)"
               >
@@ -230,6 +237,48 @@
         </tbody>
       </table>
     </section>
+
+    <div
+      v-if="resetTarget"
+      class="modal-backdrop"
+      @click.self="cancelPasswordReset"
+    >
+      <form class="password-modal" @submit.prevent="resetPassword">
+        <h2>Nova senha</h2>
+        <p>{{ resetTarget.name }} — {{ resetTarget.email }}</p>
+
+        <label>
+          Nova senha
+          <input
+            v-model="resetValue"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
+
+        <label>
+          Confirmar nova senha
+          <input
+            v-model="resetConfirmation"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" @click="cancelPasswordReset">
+            Cancelar
+          </button>
+          <button class="orange" type="submit">
+            Salvar senha
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -242,6 +291,9 @@ const me = ref({})
 const users = ref([])
 const companies = ref([])
 const audit = ref([])
+const resetTarget = ref(null)
+const resetValue = ref('')
+const resetConfirmation = ref('')
 
 const form = ref({
   name: '',
@@ -378,20 +430,39 @@ async function editUser(user) {
   }
 }
 
-async function resetPassword(user) {
-  const password = prompt(
-    `Nova senha para ${user.name}:`
-  )
+function openPasswordReset(user) {
+  resetTarget.value = user
+  resetValue.value = ''
+  resetConfirmation.value = ''
+}
 
-  if (!password) return
+function cancelPasswordReset() {
+  resetTarget.value = null
+  resetValue.value = ''
+  resetConfirmation.value = ''
+}
+
+async function resetPassword() {
+  if (!resetTarget.value) return
+
+  if (resetValue.value.length < 8) {
+    alert('A senha deve ter pelo menos 8 caracteres.')
+    return
+  }
+
+  if (resetValue.value !== resetConfirmation.value) {
+    alert('As senhas não conferem.')
+    return
+  }
 
   try {
     await api.post(
-      `/directory/users/${user.id}/reset-password`,
-      { password },
+      `/directory/users/${resetTarget.value.id}/reset-password`,
+      { password: resetValue.value },
       authHeaders()
     )
 
+    cancelPasswordReset()
     alert('Senha redefinida.')
   } catch (err) {
     alert(
@@ -490,5 +561,43 @@ select {
   padding: 13px;
   border-radius: 10px;
   border: 1px solid #d7dbe8;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #22264f99;
+  backdrop-filter: blur(4px);
+}
+
+.password-modal {
+  width: min(430px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 26px;
+  border-radius: 20px;
+  background: white;
+  box-shadow: 0 24px 60px #252a5b44;
+}
+
+.password-modal h2,
+.password-modal p {
+  margin: 0;
+}
+
+.password-modal label {
+  display: grid;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

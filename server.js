@@ -1,5 +1,9 @@
 ﻿require('dotenv').config();
 
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET não configurado.');
+}
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -18,13 +22,45 @@ const directoryRoutes = require('./src/routes/directory');
 const treasuryRoutes = require('./src/routes/treasury');
 const bankOperationRoutes =
   require('./src/routes/bank-operations');
+const db = require('./src/db/database');
 
 const app = express();
+app.set('trust proxy', 1);
 const seedAdmin = require('./src/db/seedAdmin');
 seedAdmin();
 
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+const allowedOrigins = String(
+  process.env.CORS_ORIGINS || ''
+)
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean);
+
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=()'
+  );
+  next();
+});
+app.use(cors({
+  origin(origin, callback) {
+    if (
+      !origin ||
+      !allowedOrigins.length ||
+      allowedOrigins.includes(origin)
+    ) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Origem não autorizada.'));
+  }
+}));
+app.use(express.json({ limit: '1mb' }));
 app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/payments', paymentRoutes);
@@ -42,25 +78,96 @@ app.use('/treasury', treasuryRoutes);
 app.use('/bank-operations', bankOperationRoutes);
 
 app.get('/health', (req, res) => {
-  res.json({
-    ok: true,
-    app: 'CorePay',
-    status: 'online',
-    timestamp: new Date().toISOString()
-  });
+  try {
+    const requiredTables = [
+      'users',
+      'wallets',
+      'companies',
+      'treasury_days',
+      'bank_operation_days'
+    ];
+    const existingTables = new Set(
+      db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+      `).all().map(item => item.name)
+    );
+    const missingTables = requiredTables.filter(
+      table => !existingTables.has(table)
+    );
+    const dashboardBuilt = fs.existsSync(
+      path.join(__dirname, 'dashboard', 'dist', 'index.html')
+    );
+    const ok = !missingTables.length && dashboardBuilt;
+
+    return res.status(ok ? 200 : 503).json({
+      ok,
+      app: 'CorePay',
+      status: ok ? 'online' : 'degraded',
+      database: missingTables.length ? 'incomplete' : 'ready',
+      dashboard: dashboardBuilt ? 'ready' : 'missing',
+      missingTables,
+      timestamp: new Date().toISOString()
+    });
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      app: 'CorePay',
+      status: 'degraded',
+      database: 'unavailable',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 
-app.get('/backup/db', (req, res) => {
-  const token = req.query.token;
+app.get('/backup/db', async (req, res, next) => {
+  const authorization = String(
+    req.get('authorization') || ''
+  );
+  const token = authorization.startsWith('Bearer ')
+    ? authorization.slice(7)
+    : '';
 
-  if (!process.env.BACKUP_TOKEN || token !== process.env.BACKUP_TOKEN) {
-    return res.status(403).json({ ok: false, error: 'Acesso negado' });
+  if (
+    !process.env.BACKUP_TOKEN ||
+    token !== process.env.BACKUP_TOKEN
+  ) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Acesso negado'
+    });
   }
 
-  const file = 'corepay.db';
+  const file = path.join(
+    path.dirname(db.name),
+    `corepay-backup-${Date.now()}.db`
+  );
 
-  return res.download(file, `corepay-backup-${Date.now()}.db`);
+  try {
+    await db.backup(file);
+    res.setHeader('Cache-Control', 'no-store');
+
+    return res.download(
+      file,
+      path.basename(file),
+      error => {
+        fs.rm(file, { force: true }, () => {});
+
+        if (error) {
+          next(error);
+        }
+      }
+    );
+  } catch {
+    fs.rm(file, { force: true }, () => {});
+
+    return res.status(500).json({
+      ok: false,
+      error: 'Não foi possível gerar o backup.'
+    });
+  }
 });
 
 
@@ -122,9 +229,14 @@ if (fs.existsSync(DASHBOARD_DIST)) {
 
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`CorePay rodando na porta ${PORT}`);
 });
+
+module.exports = {
+  app,
+  server
+};
 
 
 

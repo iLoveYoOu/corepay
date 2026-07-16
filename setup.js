@@ -1,25 +1,12 @@
-const bcrypt = require('bcryptjs');
-const db = require('./src/db/database');
+require('dotenv').config();
 
-const email = 'admin@corepay.local';
-const password = '123456';
+const seedAdmin = require('./src/db/seedAdmin');
 
-const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-
-if (!exists) {
-  const hash = bcrypt.hashSync(password, 10);
-
-  const result = db.prepare(`
-    INSERT INTO users (name, email, password_hash, role)
-    VALUES (?, ?, ?, ?)
-  `).run('Arthur Admin', email, hash, 'admin');
-
-  db.prepare(`
-    INSERT INTO wallets (user_id, balance_cents)
-    VALUES (?, 0)
-  `).run(result.lastInsertRowid);
-
-  console.log('Admin criado:', email, password);
-} else {
-  console.log('Admin já existe.');
+if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+  throw new Error(
+    'Defina ADMIN_EMAIL e ADMIN_PASSWORD antes de executar o setup.'
+  );
 }
+
+seedAdmin();
+console.log('Setup administrativo concluído sem credenciais padrão.');
