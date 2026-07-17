@@ -11,3 +11,10 @@ corepay.db-wal
 api.txt
 teste-asaas.cjs
 entrega1-operadores.ps1
+
+# Manus Bridge Files
+.opencode-bridge/
+*.ps1
+*.bat
+info_manus.txt
+meu-agente-cline/
