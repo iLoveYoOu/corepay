@@ -1,0 +1,5 @@
+﻿PONTE_PRONTA
+Projeto: C:\Users\Pichau\Documents\Codex\CorePay
+Modelo: openrouter/cohere/north-mini-code:free
+Aguardando tarefas enviadas pelo Codex.
+Para encerrar, feche esta janela.
