@@ -113,10 +113,6 @@ router.get('/me', auth, (req, res) => {
       manageUsers: [
         'super_admin',
         'admin'
-      ].includes(user.role),
-      viewTreasury: [
-        'super_admin',
-        'admin'
       ].includes(user.role)
     }
   });

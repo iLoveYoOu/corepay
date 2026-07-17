@@ -19,7 +19,6 @@ const mercadoPagoWebhookRoutes =
   require('./src/routes/mercadopago-webhooks');
 const adminRoutes = require('./src/routes/admin');
 const directoryRoutes = require('./src/routes/directory');
-const treasuryRoutes = require('./src/routes/treasury');
 const bankOperationRoutes =
   require('./src/routes/bank-operations');
 const db = require('./src/db/database');
@@ -74,7 +73,6 @@ app.use(
 );
 app.use('/admin', adminRoutes);
 app.use('/directory', directoryRoutes);
-app.use('/treasury', treasuryRoutes);
 app.use('/bank-operations', bankOperationRoutes);
 
 app.get('/health', (req, res) => {
@@ -83,7 +81,6 @@ app.get('/health', (req, res) => {
       'users',
       'wallets',
       'companies',
-      'treasury_days',
       'bank_operation_days'
     ];
     const existingTables = new Set(

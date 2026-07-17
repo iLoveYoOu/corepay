@@ -465,15 +465,6 @@ async function run() {
     protectedSuperAdmin
   );
 
-  const treasury = await request('/treasury/today', {
-    headers: operatorHeaders
-  });
-  assert(
-    treasury.status === 200,
-    'Migração da tesouraria falhou',
-    treasury
-  );
-
   const opened = await request('/bank-operations/open', {
     method: 'POST',
     headers: operatorHeaders,
