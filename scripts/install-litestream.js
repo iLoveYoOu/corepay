@@ -6,7 +6,7 @@ const { execFileSync } = require('child_process');
 if (process.platform !== 'linux') process.exit(0);
 
 const version = '0.5.11';
-const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+const arch = process.arch === 'arm64' ? 'arm64' : 'x86_64';
 const binDir = path.join(__dirname, '..', 'bin');
 const archive = path.join(binDir, 'litestream.tar.gz');
 const binary = path.join(binDir, 'litestream');
@@ -30,7 +30,7 @@ function download(url, destination, redirects = 0) {
 }
 
 (async () => {
-  const url = `https://github.com/benbjohnson/litestream/releases/download/v${version}/litestream-v${version}-linux-${arch}.tar.gz`;
+  const url = `https://github.com/benbjohnson/litestream/releases/download/v${version}/litestream-${version}-linux-${arch}.tar.gz`;
   await download(url, archive);
   execFileSync('tar', ['-xzf', archive, '-C', binDir], { stdio: 'inherit' });
   fs.chmodSync(binary, 0o755);
