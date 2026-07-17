@@ -8,7 +8,7 @@
     "dev": "nodemon server.js",
     "start": "node scripts/start-with-litestream.js",
     "build:dashboard": "npm --prefix dashboard ci --include=dev && npm --prefix dashboard run build",
-    "postinstall": "npm run build:dashboard && node scripts/install-litestream.js"
+    "postinstall": "npm rebuild better-sqlite3 && npm run build:dashboard && node scripts/install-litestream.js"
   },
   "keywords": [],
   "author": "",
