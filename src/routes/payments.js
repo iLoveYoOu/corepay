@@ -9,7 +9,7 @@ router.post('/manual', auth, (req, res) => {
     paid: false,
     code: 'REAL_PAYMENT_NOT_CONFIGURED',
     error:
-      'Este endpoint não envia Pix. Registre a saída na Operação Bancária somente depois de pagar no aplicativo do banco.'
+      'Este endpoint não envia créditos. Registre a saída na Operação de Créditos somente depois de pagar no aplicativo do banco.'
   });
 });
 

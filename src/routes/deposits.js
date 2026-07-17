@@ -164,7 +164,7 @@ router.post('/mercadopago/pix', auth, async (req, res) => {
         ok: false,
         code: 'MERCADOPAGO_DEPOSITS_DISABLED',
         error:
-          'Depósitos pelo Mercado Pago estão desativados para evitar tarifas. Use o Pix estático da Operação Bancária.'
+          'Depósitos pelo Mercado Pago estão desativados. Use o Pix estático da Operação de Créditos.'
       });
     }
 

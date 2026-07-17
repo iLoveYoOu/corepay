@@ -10,7 +10,7 @@
 
       <div class="actions">
         <button @click="copyPix">Copiar Pix</button>
-        <button @click="$emit('refresh')">Atualizar saldo</button>
+        <button @click="$emit('refresh')">Atualizar créditos</button>
         <button class="danger" @click="$emit('close')">Fechar</button>
       </div>
     </div>
@@ -26,7 +26,7 @@ const props = defineProps({
 })
 
 function money(v) {
-  return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  return Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' pts'
 }
 
 async function copyPix() {

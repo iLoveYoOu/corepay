@@ -3,10 +3,10 @@
     <header class="hero">
       <div>
         <span class="eyebrow">CONTROLE OPERACIONAL</span>
-        <h1>Operação Bancária</h1>
+        <h1>Operação de Créditos</h1>
         <p>
           Organize os bancos do turno, registre entradas e saídas
-          e descubra o repasse do fechamento sem custodiar dinheiro.
+          de créditos e descubra o repasse do fechamento.
         </p>
       </div>
 
@@ -31,7 +31,7 @@
 
     <div class="notice">
       <strong>Controle manual:</strong>
-      confirme cada movimentação somente depois de conferir no aplicativo do banco.
+      confirme cada movimentação de créditos somente depois de conferir no aplicativo do banco.
     </div>
 
     <section v-if="loading" class="panel empty">
@@ -73,7 +73,7 @@
           </label>
 
           <label>
-            Saldo inicial
+            Créditos iniciais
             <input
               v-model="account.openingBalance"
               inputmode="decimal"
@@ -103,7 +103,7 @@
 
       <div class="opening-footer">
         <div class="opening-total">
-          <span>Capital inicial informado</span>
+          <span>Créditos iniciais informados</span>
           <strong>{{ money(draftTotal) }}</strong>
         </div>
 
@@ -129,13 +129,13 @@
     <template v-else>
       <section class="summary-grid">
         <article class="summary-card violet">
-          <span>Capital inicial</span>
+          <span>Créditos iniciais</span>
           <strong>{{ money(state.totals.opening) }}</strong>
           <small>Base do turno</small>
         </article>
 
         <article class="summary-card blue-card">
-          <span>Saldo atual</span>
+          <span>Créditos atuais</span>
           <strong>{{ money(state.totals.current) }}</strong>
           <small>Soma de todos os bancos</small>
         </article>
@@ -223,7 +223,7 @@
       <section class="banks-head">
         <div>
           <span class="eyebrow">BANCOS DO TURNO</span>
-          <h2>Saldos operacionais</h2>
+          <h2>Créditos operacionais</h2>
         </div>
 
         <button
@@ -249,7 +249,7 @@
         <input
           v-model="newBank.openingBalance"
           inputmode="decimal"
-          placeholder="Saldo inicial"
+          placeholder="Créditos iniciais"
         />
         <input v-model="newBank.pixKey" placeholder="Chave Pix opcional" />
         <button
@@ -583,6 +583,7 @@ function parsedNumber(value) {
     .trim()
     .replace(/\s/g, '')
     .replace(/^R\$/i, '')
+    .replace(/\s*pts$/i, '')
 
   if (!text) return 0
   if (!/^-?[\d.,]+$/.test(text)) return Number.NaN
@@ -668,9 +669,9 @@ const closePreview = computed(() => {
 
 function money(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL'
-  })
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }) + ' pts'
 }
 
 function purposeName(value) {
@@ -765,7 +766,7 @@ async function load() {
   } catch (error) {
     alert(
       error.response?.data?.error ||
-      'Não foi possível carregar a operação bancária.'
+      'Não foi possível carregar a operação de créditos.'
     )
   } finally {
     loading.value = false

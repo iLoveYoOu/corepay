@@ -33,17 +33,10 @@
         <h2>CorePay</h2>
 
         <button
-          :class="{ active: tab === 'dashboard' }"
-          @click="tab='dashboard'"
-        >
-          Dashboard
-        </button>
-
-        <button
           :class="{ active: tab === 'banking' }"
           @click="tab='banking'"
         >
-          Operação Bancária
+          Operação de Créditos
         </button>
 
         <button
@@ -54,46 +47,12 @@
           Administração
         </button>
 
-        <button
-          :class="{ active: tab === 'statement' }"
-          @click="tab='statement'"
-        >
-          Extrato
-        </button>
-
         <button class="danger" @click="logout">
           Sair
         </button>
       </aside>
 
       <main>
-        <section v-if="tab==='dashboard'">
-          <h1>Dashboard</h1>
-
-          <div class="cards">
-            <div class="card">
-              <span>Saldo</span>
-              <strong>{{ money(wallet.balance) }}</strong>
-            </div>
-
-            <div class="card">
-              <span>Usuário</span>
-              <strong>{{ wallet.name }}</strong>
-            </div>
-
-            <div class="card">
-              <span>Perfil</span>
-              <strong>{{ wallet.role }}</strong>
-            </div>
-          </div>
-
-          <div class="buttons">
-            <button @click="showPasswordChange=true">
-              Alterar senha
-            </button>
-          </div>
-        </section>
-
         <section v-if="tab==='banking'">
           <BankOperations />
         </section>
@@ -102,31 +61,6 @@
           <DirectoryPanel />
         </section>
 
-        <section v-if="tab==='statement'">
-          <h1>Extrato</h1>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Tipo</th>
-                <th>Descrição</th>
-                <th>Valor</th>
-                <th>Saldo após</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              <tr v-for="t in statement" :key="t.id">
-                <td>{{ t.created_at }}</td>
-                <td>{{ t.type }}</td>
-                <td>{{ t.description }}</td>
-                <td>{{ money(t.amount) }}</td>
-                <td>{{ money(t.balance_after) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
       </main>
     </div>
 
@@ -195,28 +129,19 @@ const password = ref('')
 const token = ref(localStorage.getItem('token'))
 const error = ref('')
 const authLoading = ref(false)
-const tab = ref('dashboard')
+const tab = ref('banking')
 const showPasswordChange = ref(false)
 const currentPassword = ref('')
 const newPassword = ref('')
 const newPasswordConfirmation = ref('')
 
 const wallet = ref({})
-const statement = ref([])
 
 function money(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL'
-  })
-}
-
-function formatDate(value) {
-  if (!value) return '-'
-
-  return new Date(
-    String(value).replace(' ', 'T') + 'Z'
-  ).toLocaleString('pt-BR')
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }) + ' pts'
 }
 
 async function login() {
@@ -252,17 +177,6 @@ async function carregar() {
   )
 
   wallet.value = data.wallet
-
-  await carregarExtrato()
-}
-
-async function carregarExtrato() {
-  const { data } = await api.get(
-    '/wallet/statement',
-    authHeaders()
-  )
-
-  statement.value = data.transactions
 }
 
 async function alterarSenha() {
@@ -305,8 +219,7 @@ function clearSession(message = '') {
   localStorage.removeItem('token')
   token.value = null
   wallet.value = {}
-  statement.value = []
-  tab.value = 'dashboard'
+  tab.value = 'banking'
   password.value = ''
   cancelPasswordChange()
 

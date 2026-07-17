@@ -9,7 +9,7 @@ router.post('/', auth, (req, res) => {
     withdrawn: false,
     code: 'REAL_WITHDRAW_NOT_CONFIGURED',
     error:
-      'Este endpoint não transfere dinheiro. Registre a saída na Operação Bancária somente depois de sacar no banco.'
+      'Este endpoint não transfere créditos. Registre a saída na Operação de Créditos somente depois de sacar no banco.'
   });
 });
 

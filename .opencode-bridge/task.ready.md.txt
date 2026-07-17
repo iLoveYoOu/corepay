@@ -1,8 +1,0 @@
-# Tarefa de Inicialização
-Leia os seguintes arquivos e execute os comandos listados:
-1. Ler: AGENTS.md, opencode.json
-2. Executar:
-   - git status -sb
-   - git remote -v
-   - git log --oneline --decorate -8
-3. Retorne apenas o conteúdo solicitado e a saída dos comandos.

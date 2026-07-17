@@ -422,41 +422,4 @@ router.post('/:id/balance', auth, requireAdmin, (req, res) => {
   }
 });
 
-router.get('/:id/statement', auth, requireAdmin, (req, res) => {
-  const target = getTarget(req, req.params.id);
-
-  if (!target) {
-    return res.status(404).json({
-      ok: false,
-      error: 'Operador não encontrado.'
-    });
-  }
-
-  const wallet = getWallet(target.id);
-
-  if (!wallet) {
-    return res.status(404).json({
-      ok: false,
-      error: 'Carteira não encontrada.'
-    });
-  }
-
-  const rows = db.prepare(`
-    SELECT *
-    FROM ledger
-    WHERE wallet_id = ?
-    ORDER BY id DESC
-    LIMIT 100
-  `).all(wallet.id);
-
-  return res.json({
-    ok: true,
-    transactions: rows.map(row => ({
-      ...row,
-      amount: row.amount_cents / 100,
-      balance_after: row.balance_after_cents / 100
-    }))
-  });
-});
-
 module.exports = router;
