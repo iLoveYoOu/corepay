@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db/database');
 const auth = require('../middlewares/auth');
+const sheets = require('../services/sheetsService');
 
 const router = express.Router();
 
@@ -44,6 +45,46 @@ router.post('/deposit', auth, (req, res) => {
     error:
       'Crédito manual pelo operador foi desativado. Use a Operação de Créditos ou um ajuste administrativo auditado.'
   });
+});
+
+router.post('/sheets/operacao', auth, async (req, res) => {
+  try {
+    const { deposito } = req.body;
+
+    if (!deposito || deposito <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Informe um valor de deposito valido.'
+      });
+    }
+
+    const lucro = sheets.calcularLucro(deposito);
+    const banca = sheets.calcularBanca(deposito, lucro);
+
+    const resultado = await sheets.salvarOperacao({
+      deposito,
+      usuario: req.user.name || req.user.email,
+      operador: req.user.id
+    });
+
+    return res.status(201).json({
+      ok: true,
+      sheets: resultado,
+      calculos: {
+        deposito: Number(deposito),
+        lucro,
+        banca,
+        pctLucro: Number(((lucro / deposito) * 100).toFixed(1)),
+        pctBanca: Number(((banca / deposito) * 100).toFixed(1))
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao salvar operacao na planilha:', err.message);
+    return res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
 });
 
 module.exports = router;

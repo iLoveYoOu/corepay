@@ -323,6 +323,89 @@
         </article>
       </section>
 
+      <section v-if="state.day.status === 'open'" class="panel launch-panel">
+        <div class="section-title">
+          <div>
+            <span class="eyebrow">LANÇAMENTOS</span>
+            <h2>Registrar depósito</h2>
+          </div>
+        </div>
+
+        <div class="launch-form">
+          <label>
+            Casa
+            <input v-model="launchForm.casa" placeholder="Nome da casa" />
+          </label>
+
+          <label>
+            Depósito
+            <input v-model="launchForm.deposito" inputmode="decimal" placeholder="0,00" />
+          </label>
+
+          <label>
+            Saque/Ret
+            <input v-model="launchForm.saque" inputmode="decimal" placeholder="0,00" />
+          </label>
+
+          <button
+            class="blue"
+            :disabled="actionBusy"
+            @click="launch"
+          >
+            {{ pendingAction === 'launch' ? 'Lançando...' : 'Lançar' }}
+          </button>
+        </div>
+
+        <div v-if="numberValue(launchForm.deposito)" class="launch-preview">
+          <div>
+            <span>Banca (88%)</span>
+            <strong>{{ money(launchCalculos.banca) }}</strong>
+          </div>
+          <div>
+            <span>Lucro Blogueira (12%)</span>
+            <strong>{{ money(launchCalculos.lucroBlogueira) }}</strong>
+          </div>
+          <div>
+            <span>Mandar Lucão (50%)</span>
+            <strong>{{ money(launchCalculos.lucao) }}</strong>
+          </div>
+        </div>
+
+        <div v-if="state.launches.length" class="launches-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Horário</th>
+                <th>Casa</th>
+                <th>Depósito</th>
+                <th>Banca (88%)</th>
+                <th>Lucro Blog. (12%)</th>
+                <th>Mandar Lucão (50%)</th>
+                <th>Saque/Ret</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="l in state.launches" :key="l.id">
+                <td>{{ formatDate(l.created_at) }}</td>
+                <td>{{ l.casa }}</td>
+                <td>{{ money(l.deposito) }}</td>
+                <td>{{ money(l.banca) }}</td>
+                <td>{{ money(l.lucroBlogueira) }}</td>
+                <td><strong>{{ money(l.lucao) }}</strong></td>
+                <td>{{ l.saque ? money(l.saque) : '—' }}</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="launch-total">
+                <td colspan="5">Total Mandar Lucão</td>
+                <td><strong>{{ money(totalLucaoHoje) }}</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
       <section v-if="pix.show" class="panel pix-panel">
         <div>
           <span class="eyebrow">PIX ESTÁTICO SEM VALOR</span>
@@ -517,6 +600,8 @@ const state = reactive({
   day: null,
   accounts: [],
   movements: [],
+  launches: [],
+  totalLucao: 0,
   history: [],
   totals: {
     opening: 0,
@@ -554,6 +639,24 @@ const pix = reactive({
   merchantName: '',
   merchantCity: '',
   payload: ''
+})
+
+const launchForm = reactive({
+  casa: '',
+  deposito: '',
+  saque: ''
+})
+
+const launchCalculos = computed(() => {
+  const deposito = numberValue(launchForm.deposito)
+  const banca = Math.round(deposito * 0.88 * 100) / 100
+  const lucroBlogueira = Math.round(deposito * 0.12 * 100) / 100
+  const lucao = Math.round(lucroBlogueira * 0.5 * 100) / 100
+  return { banca, lucroBlogueira, lucao }
+})
+
+const totalLucaoHoje = computed(() => {
+  return state.launches.reduce((sum, l) => sum + (l.lucao || 0), 0)
 })
 
 const movementAttempt = reactive({
@@ -739,6 +842,8 @@ function apply(data) {
   state.day = data.day
   state.accounts = data.accounts || []
   state.movements = data.movements || []
+  state.launches = data.launches || []
+  state.totalLucao = data.totalLucao || 0
   state.totals = data.totals || state.totals
 }
 
@@ -882,6 +987,38 @@ async function move(account, type) {
     alert(
       error.response?.data?.error ||
       'Não foi possível registrar a movimentação.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+async function launch() {
+  if (actionBusy.value) return
+  if (!launchForm.casa.trim() || !numberValue(launchForm.deposito)) {
+    alert('Informe a casa e o valor do depósito.')
+    return
+  }
+
+  pendingAction.value = 'launch'
+
+  try {
+    const { data } = await api.post(
+      `/bank-operations/days/${state.day.id}/launches`,
+      {
+        casa: launchForm.casa,
+        deposito: launchForm.deposito,
+        saque: launchForm.saque || ''
+      },
+      authHeaders()
+    )
+
+    apply(data)
+    Object.assign(launchForm, { casa: '', deposito: '', saque: '' })
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível registrar o lançamento.'
     )
   } finally {
     pendingAction.value = ''
@@ -1166,6 +1303,18 @@ button:disabled:hover{transform:none}
 }
 .bank-actions button{flex:1}
 .pix-button{width:100%;margin-top:10px;background:#5b61d0}
+.launch-panel{display:grid;gap:18px}
+.launch-form{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:12px;align-items:end}
+.launch-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;background:#eef4ff;border-radius:14px;padding:16px}
+.launch-preview div{text-align:center}
+.launch-preview span{display:block;font-size:12px;color:var(--muted)}
+.launch-preview strong{font-size:22px;color:var(--violet)}
+.launches-table-wrap{overflow:auto}
+.launches-table-wrap table{width:100%;border-collapse:collapse}
+.launches-table-wrap th,.launches-table-wrap td{text-align:left;padding:11px 13px;border-bottom:1px solid #e4e9f2;font-size:13px}
+.launches-table-wrap th{font-size:11px;color:var(--muted)}
+.launch-total{background:#eef4ff;font-weight:800}
+.launch-total td{border-bottom:none}
 .pix-panel{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:14px;align-items:end}
 .pix-panel textarea{grid-column:1/-2;min-height:100px}
 .movements table{width:100%;border-collapse:collapse;margin-top:16px}
@@ -1183,7 +1332,7 @@ th{font-size:12px;color:var(--muted)}
 @media(max-width:1000px){
   .summary-grid{grid-template-columns:repeat(2,1fr)}
   .bank-grid{grid-template-columns:repeat(2,1fr)}
-  .draft-card,.close-panel,.new-bank,.pix-panel{grid-template-columns:1fr 1fr}
+  .draft-card,.close-panel,.new-bank,.pix-panel,.launch-form{grid-template-columns:1fr 1fr}
   .draft-number{display:none}
   .closing-result{grid-template-columns:1fr 1fr}
 }

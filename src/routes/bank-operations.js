@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../middlewares/auth');
 const db = require('../db/database');
+const sheets = require('../services/sheetsService');
 
 const router = express.Router();
 
@@ -68,6 +69,24 @@ ON bank_operation_accounts(day_id);
 
 CREATE INDEX IF NOT EXISTS idx_bank_movements_day
 ON bank_operation_movements(day_id, created_at);
+
+CREATE TABLE IF NOT EXISTS bank_operation_launches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  casa TEXT NOT NULL,
+  deposito_cents INTEGER NOT NULL,
+  banca_cents INTEGER NOT NULL,
+  lucro_blogueira_cents INTEGER NOT NULL,
+  lucao_cents INTEGER NOT NULL,
+  saque_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (day_id) REFERENCES bank_operation_days(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_launches_day
+ON bank_operation_launches(day_id, created_at);
 `);
 
 function columnExists(table, column) {
@@ -308,6 +327,8 @@ function serialize(req, day) {
       day: null,
       accounts: [],
       movements: [],
+      launches: [],
+      totalLucao: 0,
       totals: {
         opening: 0,
         current: 0,
@@ -323,6 +344,19 @@ function serialize(req, day) {
     WHERE day_id = ? AND active = 1
     ORDER BY name
   `).all(day.id);
+
+  const launches = db.prepare(`
+    SELECT *
+    FROM bank_operation_launches
+    WHERE day_id = ?
+    ORDER BY id DESC
+    LIMIT 300
+  `).all(day.id);
+
+  const totalLucaoCents = launches.reduce(
+    (sum, l) => sum + l.lucao_cents,
+    0
+  );
 
   const movements = db.prepare(`
     SELECT
@@ -375,6 +409,15 @@ function serialize(req, day) {
       reversed: Boolean(item.reversed),
       amount: money(item.amount_cents)
     })),
+    launches: launches.map(l => ({
+      ...l,
+      deposito: money(l.deposito_cents),
+      banca: money(l.banca_cents),
+      lucroBlogueira: money(l.lucro_blogueira_cents),
+      lucao: money(l.lucao_cents),
+      saque: money(l.saque_cents)
+    })),
+    totalLucao: money(totalLucaoCents),
     totals: {
       opening: money(day.opening_total_cents),
       current: money(current),
@@ -790,6 +833,73 @@ router.post(
     }
   }
 );
+
+router.post('/days/:dayId/launches', auth, async (req, res) => {
+  try {
+    const day = ownedDay(req, req.params.dayId);
+
+    if (!day || day.status !== 'open') {
+      return res.status(404).json({
+        ok: false,
+        error: 'Dia aberto não encontrado.'
+      });
+    }
+
+    const casa = String(req.body.casa || '').trim();
+    const depositoCents = toCents(req.body.deposito);
+    const saqueCents = toCents(req.body.saque || 0) || 0;
+
+    if (!casa || !depositoCents || depositoCents <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Informe a casa e o valor do depósito.'
+      });
+    }
+
+    const bancaCents = Math.round(depositoCents * 0.88);
+    const lucroCents = Math.round(depositoCents * 0.12);
+    const lucaoCents = Math.round(lucroCents * 0.5);
+
+    db.prepare(`
+      INSERT INTO bank_operation_launches (
+        day_id, user_id, casa, deposito_cents,
+        banca_cents, lucro_blogueira_cents,
+        lucao_cents, saque_cents
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      day.id,
+      req.user.id,
+      casa,
+      depositoCents,
+      bancaCents,
+      lucroCents,
+      lucaoCents,
+      saqueCents
+    );
+
+    sheets.salvarLancamento({
+      casa,
+      deposito: money(depositoCents),
+      banca: money(bancaCents),
+      lucroBlogueira: money(lucroCents),
+      lucao: money(lucaoCents),
+      saque: money(saqueCents)
+    }).catch(err => {
+      console.error('Erro ao salvar lançamento na planilha:', err.message);
+    });
+
+    return res.status(201).json(
+      serialize(req, ownedDay(req, day.id))
+    );
+  } catch (error) {
+    console.error('Erro ao criar lançamento:', error.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'Erro ao registrar lançamento.'
+    });
+  }
+});
 
 router.post('/days/:dayId/close', auth, (req, res) => {
   const day = ownedDay(req, req.params.dayId);
