@@ -897,10 +897,18 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
     }
 
     const depositoValue = depositoCents / 100;
-    const lucroValue = calcularLucro(depositoValue);
-    const lucroCents = Math.round(lucroValue * 100);
-    const bancaCents = depositoCents - lucroCents;
-    const lucaoCents = Math.round(lucroCents / 2);
+    let bancaCents, lucroCents, lucaoCents;
+
+    if ([81, 121, 241].includes(depositoValue)) {
+      bancaCents = 0;
+      lucroCents = saqueCents;
+      lucaoCents = Math.round(saqueCents / 2);
+    } else {
+      const lucroValue = calcularLucro(depositoValue);
+      lucroCents = Math.round(lucroValue * 100);
+      bancaCents = depositoCents - lucroCents;
+      lucaoCents = Math.round(lucroCents / 2);
+    }
 
     db.prepare(`
       INSERT INTO bank_operation_launches (
@@ -981,10 +989,18 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
   }
 
   const depositoValue = depositoCents / 100;
-  const lucroValue = calcularLucro(depositoValue);
-  const lucroCents = Math.round(lucroValue * 100);
-  const bancaCents = depositoCents - lucroCents;
-  const lucaoCents = Math.round(lucroCents / 2);
+  let bancaCents, lucroCents, lucaoCents;
+
+  if ([81, 121, 241].includes(depositoValue)) {
+    bancaCents = 0;
+    lucroCents = saqueCents;
+    lucaoCents = Math.round(saqueCents / 2);
+  } else {
+    const lucroValue = calcularLucro(depositoValue);
+    lucroCents = Math.round(lucroValue * 100);
+    bancaCents = depositoCents - lucroCents;
+    lucaoCents = Math.round(lucroCents / 2);
+  }
 
   db.prepare(`
     UPDATE bank_operation_launches

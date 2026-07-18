@@ -362,7 +362,7 @@
             <strong>{{ money(launchCalculos.banca) }}</strong>
           </div>
           <div>
-            <span>Lucro Blogueira</span>
+            <span>Taxa da Blogueira</span>
             <strong>{{ money(launchCalculos.lucroBlogueira) }}</strong>
           </div>
           <div>
@@ -379,7 +379,7 @@
                 <th>Casa</th>
                 <th>Depósito</th>
                 <th>Banca</th>
-                <th>Lucro Blog.</th>
+                <th>Tx Blogueira</th>
                 <th>Mandar Lucão</th>
                 <th>Saque/Ret</th>
                 <th v-if="state.day.status === 'open'">Ações</th>
@@ -582,6 +582,15 @@ function calcularLucro(deposito) {
 
 const launchCalculos = computed(() => {
   const deposito = numberValue(launchForm.deposito)
+  const saque = numberValue(launchForm.saque)
+
+  if ([81, 121, 241].includes(deposito)) {
+    const lucroBlogueira = saque
+    const banca = 0
+    const lucao = Math.round(saque * 0.5 * 100) / 100
+    return { banca, lucroBlogueira, lucao }
+  }
+
   const lucroBlogueira = calcularLucro(deposito)
   const banca = deposito - lucroBlogueira
   const lucao = Math.round(lucroBlogueira * 0.5 * 100) / 100
