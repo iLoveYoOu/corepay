@@ -283,7 +283,30 @@
             </button>
           </div>
 
-          <h3>{{ account.name }}</h3>
+          <div class="bank-name-row">
+            <template v-if="editingNameId === account.id">
+              <input
+                v-model="renameValue"
+                class="rename-input"
+                @keyup.enter="saveName(account.id)"
+                @keyup.escape="editingNameId = null"
+                @blur="saveName(account.id)"
+                autofocus
+              />
+            </template>
+            <template v-else>
+              <h3>{{ account.name }}</h3>
+              <button
+                v-if="state.day.status === 'open'"
+                class="edit-name-btn"
+                title="Editar nome"
+                :disabled="actionBusy"
+                @click.stop="startRename(account)"
+              >
+                ✏️
+              </button>
+            </template>
+          </div>
           <strong class="balance">
             {{ money(account.currentBalance) }}
           </strong>
@@ -522,13 +545,17 @@ const state = reactive({
   }
 })
 
-const draftAccounts = reactive([
-  {
-    name: '',
+const DEFAULT_BANK_NAMES = [
+  'Pagbank', 'PicPay', 'MP', 'Nubank', 'Neon'
+]
+
+const draftAccounts = reactive(
+  DEFAULT_BANK_NAMES.map(name => ({
+    name,
     purpose: 'both',
     openingBalance: ''
-  }
-])
+  }))
+)
 
 const newBank = reactive({
   name: '',
@@ -542,6 +569,8 @@ const closing = reactive({
 })
 
 const editingId = ref(null)
+const editingNameId = ref(null)
+const renameValue = ref('')
 
 const launchForm = reactive({
   casa: '',
@@ -754,7 +783,11 @@ function resetTransientState() {
   draftAccounts.splice(
     0,
     draftAccounts.length,
-    emptyAccount()
+    ...DEFAULT_BANK_NAMES.map(name => ({
+      name,
+      purpose: 'both',
+      openingBalance: ''
+    }))
   )
   Object.assign(newBank, emptyAccount())
   resetClosing()
@@ -868,6 +901,41 @@ async function addBank() {
       'Não foi possível adicionar o banco.'
     )
   } finally {
+    pendingAction.value = ''
+  }
+}
+
+function startRename(account) {
+  editingNameId.value = account.id
+  renameValue.value = account.name
+}
+
+async function saveName(accountId) {
+  if (!editingNameId.value) return
+
+  const name = renameValue.value.trim()
+  if (!name) {
+    editingNameId.value = null
+    return
+  }
+
+  pendingAction.value = `rename-${accountId}`
+
+  try {
+    const { data } = await api.put(
+      `/bank-operations/days/${state.day.id}/accounts/${accountId}`,
+      { name },
+      authHeaders()
+    )
+
+    apply(data)
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível renomear o banco.'
+    )
+  } finally {
+    editingNameId.value = null
     pendingAction.value = ''
   }
 }
@@ -1252,6 +1320,18 @@ button:disabled:hover{transform:none}
 .bank-card{padding:20px}
 .bank-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .purpose{background:#e9ecf8;color:#5a6680}
+.bank-name-row{display:flex;align-items:center;gap:6px;margin:16px 0 5px}
+.bank-name-row h3{margin:0}
+.edit-name-btn{
+  background:none;border:none;cursor:pointer;font-size:15px;padding:2px 4px;
+  border-radius:6px;opacity:0.5;transition:opacity .15s,background .15s;box-shadow:none;
+  line-height:1
+}
+.edit-name-btn:hover{opacity:1;background:#e9ecf8;transform:none}
+.edit-name-btn:disabled{opacity:0.3}
+.rename-input{
+  flex:1;font-size:15px;font-weight:700;padding:6px 10px;min-width:0
+}
 .delete-bank{
   background:none;border:none;cursor:pointer;font-size:18px;padding:4px 6px;
   border-radius:8px;opacity:0.6;transition:opacity .15s,background .15s;box-shadow:none;

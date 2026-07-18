@@ -457,16 +457,21 @@ router.get('/days/:dayId', auth, (req, res) => {
   return res.json(serialize(req, day));
 });
 
+const DEFAULT_BANKS = [
+  { name: 'Pagbank', purpose: 'both', pixKey: '' },
+  { name: 'PicPay', purpose: 'both', pixKey: '' },
+  { name: 'MP', purpose: 'both', pixKey: '' },
+  { name: 'Nubank', purpose: 'both', pixKey: '' },
+  { name: 'Neon', purpose: 'both', pixKey: '' }
+];
+
 router.post('/open', auth, (req, res) => {
-  const accounts = Array.isArray(req.body.accounts)
+  let accounts = Array.isArray(req.body.accounts)
     ? req.body.accounts
     : [];
 
   if (!accounts.length) {
-    return res.status(400).json({
-      ok: false,
-      error: 'Cadastre pelo menos um banco para iniciar o dia.'
-    });
+    accounts = DEFAULT_BANKS;
   }
 
   const normalized = [];
@@ -474,7 +479,7 @@ router.post('/open', auth, (req, res) => {
   for (const account of accounts) {
     const name = String(account.name || '').trim();
     const purpose = String(account.purpose || 'both');
-    const opening = toCents(account.openingBalance);
+    const opening = toCents(account.openingBalance ?? 0);
 
     if (
       !name ||
@@ -870,6 +875,46 @@ router.delete('/days/:dayId/accounts/:accountId', auth, (req, res) => {
       WHERE id = ?
     `).run(account.opening_balance_cents, day.id);
   })();
+
+  return res.json(serialize(req, ownedDay(req, day.id)));
+});
+
+router.put('/days/:dayId/accounts/:accountId', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'open') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  const account = db.prepare(`
+    SELECT * FROM bank_operation_accounts
+    WHERE id = ? AND day_id = ? AND active = 1
+  `).get(Number(req.params.accountId), day.id);
+
+  if (!account) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Banco não encontrado.'
+    });
+  }
+
+  const name = String(req.body.name || '').trim();
+
+  if (!name) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Nome do banco é obrigatório.'
+    });
+  }
+
+  db.prepare(`
+    UPDATE bank_operation_accounts
+    SET name = ?
+    WHERE id = ? AND day_id = ?
+  `).run(name, account.id, day.id);
 
   return res.json(serialize(req, ownedDay(req, day.id)));
 });
