@@ -3,7 +3,7 @@
     <header class="hero">
       <div>
         <span class="eyebrow">CONTROLE OPERACIONAL</span>
-        <h1>Operação Meia do Lucao</h1>
+        <h1>Meia do Lucao</h1>
         <p>
           Organize os bancos do turno, registre entradas e saídas
           de créditos e descubra o repasse do fechamento.
@@ -73,7 +73,7 @@
           </label>
 
           <label>
-            Créditos iniciais
+            Saldo inicial
             <input
               v-model="account.openingBalance"
               inputmode="decimal"
@@ -103,7 +103,7 @@
 
       <div class="opening-footer">
         <div class="opening-total">
-          <span>Créditos iniciais informados</span>
+          <span>Saldo inicial informado</span>
           <strong>{{ money(draftTotal) }}</strong>
         </div>
 
@@ -113,7 +113,7 @@
             :disabled="actionBusy"
             @click="addDraft"
           >
-            +bancos
+            +Bancos
           </button>
           <button
             class="blue"
@@ -129,13 +129,13 @@
     <template v-else>
       <section class="summary-grid">
         <article class="summary-card violet">
-          <span>Créditos iniciais</span>
+          <span>Saldo inicial</span>
           <strong>{{ money(state.totals.opening) }}</strong>
           <small>Base do turno</small>
         </article>
 
         <article class="summary-card blue-card">
-          <span>Créditos atuais</span>
+          <span>Saldo atual</span>
           <strong>{{ money(state.totals.current) }}</strong>
           <small>Soma de todos os bancos</small>
         </article>
@@ -232,7 +232,7 @@
           :disabled="actionBusy"
           @click="showNewBank = !showNewBank"
         >
-           +bancos
+           +Bancos
         </button>
       </section>
 
@@ -272,6 +272,15 @@
             <span :class="['purpose', account.purpose]">
               {{ purposeName(account.purpose) }}
             </span>
+            <button
+              v-if="state.day.status === 'open'"
+              class="delete-bank"
+              title="Remover banco"
+              :disabled="actionBusy"
+              @click.stop="removeBank(account)"
+            >
+              🗑️
+            </button>
           </div>
 
           <h3>{{ account.name }}</h3>
@@ -800,6 +809,30 @@ async function addBank() {
   }
 }
 
+async function removeBank(account) {
+  if (actionBusy.value) return
+
+  if (!confirm(`Remover "${account.name}" da operação de hoje?`)) return
+
+  pendingAction.value = `remove-${account.id}`
+
+  try {
+    const { data } = await api.delete(
+      `/bank-operations/days/${state.day.id}/accounts/${account.id}`,
+      authHeaders()
+    )
+
+    apply(data)
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível remover o banco.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
 async function move(account, type) {
   if (actionBusy.value) return
 
@@ -1084,8 +1117,15 @@ button:disabled:hover{transform:none}
 .new-bank{display:grid;grid-template-columns:1.2fr 1fr 1fr 1.5fr auto;gap:12px}
 .bank-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .bank-card{padding:20px}
-.bank-top{display:flex;justify-content:space-between;align-items:center}
+.bank-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .purpose{background:#e9ecf8;color:#5a6680}
+.delete-bank{
+  background:none;border:none;cursor:pointer;font-size:18px;padding:4px 6px;
+  border-radius:8px;opacity:0.6;transition:opacity .15s,background .15s;box-shadow:none;
+  margin-left:auto;line-height:1;
+}
+.delete-bank:hover{opacity:1;background:#fee2e2;transform:none}
+.delete-bank:disabled{opacity:0.3}
 .purpose.pay{background:#fff0e3;color:#ce650f}
 .purpose.receive{background:#e1f8eb;color:#188a4a}
 .bank-card h3{margin:16px 0 5px}

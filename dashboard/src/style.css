@@ -123,12 +123,17 @@ p {
 }
 
 .login-brand {
-  width: max-content;
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: linear-gradient(120deg, var(--violet), var(--purple));
-  color: white;
-  font-weight: 850;
+  width: 140px;
+  height: auto;
+  display: block;
+}
+
+.sidebar-logo {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 0 22px 0;
+  border-radius: 12px;
 }
 
 .login h1 {
@@ -342,10 +347,9 @@ button:disabled {
     box-shadow: 0 8px 24px #4b459329;
   }
 
-  aside h2 {
+  .sidebar-logo {
+    width: 40px;
     margin: 0 8px 0 0;
-    font-size: 21px;
-    white-space: nowrap;
   }
 
   aside button {

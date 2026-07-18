@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="page">
     <form v-if="!token" class="login" @submit.prevent="login">
-      <div class="login-brand">CorePay</div>
+      <img src="/logo.jpeg" class="login-brand" alt="CorePay" />
       <h1>Bem-vindo</h1>
       <p class="login-copy">Entre para acessar sua operação.</p>
       <label>
@@ -30,7 +30,7 @@
 
     <div v-else class="app">
       <aside>
-        <h2>CorePay</h2>
+        <img src="/logo.jpeg" class="sidebar-logo" alt="CorePay" />
 
         <button
           :class="{ active: tab === 'banking' }"

@@ -834,6 +834,45 @@ router.post(
   }
 );
 
+router.delete('/days/:dayId/accounts/:accountId', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'open') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  const account = db.prepare(`
+    SELECT * FROM bank_operation_accounts
+    WHERE id = ? AND day_id = ? AND active = 1
+  `).get(Number(req.params.accountId), day.id);
+
+  if (!account) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Banco não encontrado.'
+    });
+  }
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE bank_operation_accounts
+      SET active = 0
+      WHERE id = ? AND day_id = ?
+    `).run(account.id, day.id);
+
+    db.prepare(`
+      UPDATE bank_operation_days
+      SET opening_total_cents = opening_total_cents - ?
+      WHERE id = ?
+    `).run(account.opening_balance_cents, day.id);
+  })();
+
+  return res.json(serialize(req, ownedDay(req, day.id)));
+});
+
 router.post('/days/:dayId/launches', auth, async (req, res) => {
   try {
     const day = ownedDay(req, req.params.dayId);
