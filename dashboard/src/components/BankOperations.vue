@@ -20,6 +20,14 @@
         </button>
         <button
           v-if="state.day?.status === 'open'"
+          class="danger"
+          :disabled="actionBusy"
+          @click="resetDay"
+        >
+          {{ pendingAction === 'reset' ? 'Resetando...' : 'Resetar dia' }}
+        </button>
+        <button
+          v-if="state.day?.status === 'open'"
           class="orange"
           :disabled="actionBusy"
           @click="showClose = !showClose"
@@ -137,11 +145,6 @@
           <small>{{ entryCount }} movimentações</small>
         </article>
 
-        <article class="summary-card orange-card">
-          <span>Saídas registradas</span>
-          <strong>{{ money(state.totals.exits) }}</strong>
-          <small>{{ exitCount }} movimentações</small>
-        </article>
       </section>
 
       <section class="highlight-card">
@@ -593,7 +596,9 @@ const launchCalculos = computed(() => {
 
   const lucroBlogueira = calcularLucro(deposito)
   const banca = deposito - lucroBlogueira
-  const lucao = Math.round(lucroBlogueira * 0.5 * 100) / 100
+  const lucao = saque <= banca
+    ? Math.round(((banca - saque) + lucroBlogueira) * 100) / 100
+    : Math.round(((lucroBlogueira / 2) + ((saque - banca) / 2)) * 100) / 100
   return { banca, lucroBlogueira, lucao }
 })
 
@@ -1060,6 +1065,31 @@ async function closeDay() {
     alert(
       error.response?.data?.error ||
       'Não foi possível fechar o dia.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+async function resetDay() {
+  if (actionBusy.value) return
+
+  if (!confirm('Tem certeza? Isso vai apagar todos os lançamentos e movimentações do dia.')) return
+
+  pendingAction.value = 'reset'
+
+  try {
+    const { data } = await api.post(
+      `/bank-operations/days/${state.day.id}/reset`,
+      {},
+      authHeaders()
+    )
+
+    apply(data)
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível resetar o dia.'
     )
   } finally {
     pendingAction.value = ''

@@ -907,7 +907,11 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
       const lucroValue = calcularLucro(depositoValue);
       lucroCents = Math.round(lucroValue * 100);
       bancaCents = depositoCents - lucroCents;
-      lucaoCents = Math.round(lucroCents / 2);
+      if (saqueCents <= bancaCents) {
+        lucaoCents = (bancaCents - saqueCents) + lucroCents;
+      } else {
+        lucaoCents = Math.round((lucroCents / 2) + ((saqueCents - bancaCents) / 2));
+      }
     }
 
     db.prepare(`
@@ -999,7 +1003,11 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
     const lucroValue = calcularLucro(depositoValue);
     lucroCents = Math.round(lucroValue * 100);
     bancaCents = depositoCents - lucroCents;
-    lucaoCents = Math.round(lucroCents / 2);
+    if (saqueCents <= bancaCents) {
+      lucaoCents = (bancaCents - saqueCents) + lucroCents;
+    } else {
+      lucaoCents = Math.round((lucroCents / 2) + ((saqueCents - bancaCents) / 2));
+    }
   }
 
   db.prepare(`
@@ -1119,6 +1127,37 @@ router.post('/days/:dayId/close', auth, (req, res) => {
   return res.json(
     serialize(req, ownedDay(req, day.id))
   );
+});
+
+router.post('/days/:dayId/reset', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'open') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  db.transaction(() => {
+    db.prepare(`
+      DELETE FROM bank_operation_launches
+      WHERE day_id = ?
+    `).run(day.id);
+
+    db.prepare(`
+      DELETE FROM bank_operation_movements
+      WHERE day_id = ?
+    `).run(day.id);
+
+    db.prepare(`
+      UPDATE bank_operation_accounts
+      SET current_balance_cents = opening_balance_cents
+      WHERE day_id = ?
+    `).run(day.id);
+  })();
+
+  return res.json(serialize(req, ownedDay(req, day.id)));
 });
 
 function field(id, value) {
