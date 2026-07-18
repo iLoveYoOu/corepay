@@ -562,11 +562,20 @@ const lucroTabela = {
   2950: 345, 3000: 360
 }
 
+const lucroTabela2 = {
+  301: 100,
+  401: 120,
+  501: 140,
+  1001: 280
+}
+
 function calcularLucro(deposito) {
-  const valores = Object.keys(lucroTabela).map(Number).sort((a, b) => a - b)
+  const ultimoDigito = Math.floor(deposito) % 10
+  const tabela = ultimoDigito === 1 ? lucroTabela2 : lucroTabela
+  const valores = Object.keys(tabela).map(Number).sort((a, b) => a - b)
   let lucro = 0
   for (const valor of valores) {
-    if (deposito >= valor) lucro = lucroTabela[valor]
+    if (deposito >= valor) lucro = tabela[valor]
   }
   return lucro
 }
