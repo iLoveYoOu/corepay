@@ -940,6 +940,95 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
   }
 });
 
+router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'open') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  const launch = db.prepare(`
+    SELECT * FROM bank_operation_launches
+    WHERE id = ? AND day_id = ?
+  `).get(Number(req.params.launchId), day.id);
+
+  if (!launch) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Lançamento não encontrado.'
+    });
+  }
+
+  const casa = String(req.body.casa ?? launch.casa).trim();
+  const depositoCents = req.body.deposito !== undefined
+    ? toCents(req.body.deposito)
+    : launch.deposito_cents;
+  const saqueCents = req.body.saque !== undefined
+    ? (toCents(req.body.saque) || 0)
+    : launch.saque_cents;
+
+  if (!casa || !depositoCents || depositoCents <= 0) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Informe a casa e o valor do depósito.'
+    });
+  }
+
+  const bancaCents = Math.round(depositoCents * 0.88);
+  const lucroCents = Math.round(depositoCents * 0.12);
+  const lucaoCents = Math.round(lucroCents * 0.5);
+
+  db.prepare(`
+    UPDATE bank_operation_launches
+    SET casa = ?,
+        deposito_cents = ?,
+        banca_cents = ?,
+        lucro_blogueira_cents = ?,
+        lucao_cents = ?,
+        saque_cents = ?
+    WHERE id = ? AND day_id = ?
+  `).run(casa, depositoCents, bancaCents, lucroCents, lucaoCents, saqueCents, launch.id, day.id);
+
+  return res.json(
+    serialize(req, ownedDay(req, day.id))
+  );
+});
+
+router.delete('/days/:dayId/launches/:launchId', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'open') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  const launch = db.prepare(`
+    SELECT * FROM bank_operation_launches
+    WHERE id = ? AND day_id = ?
+  `).get(Number(req.params.launchId), day.id);
+
+  if (!launch) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Lançamento não encontrado.'
+    });
+  }
+
+  db.prepare(`
+    DELETE FROM bank_operation_launches
+    WHERE id = ? AND day_id = ?
+  `).run(launch.id, day.id);
+
+  return res.json(
+    serialize(req, ownedDay(req, day.id))
+  );
+});
+
 router.post('/days/:dayId/close', auth, (req, res) => {
   const day = ownedDay(req, req.params.dayId);
 

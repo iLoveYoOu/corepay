@@ -68,7 +68,6 @@
             <select v-model="account.purpose">
               <option value="both">Pagar e receber</option>
               <option value="pay">Somente pagar</option>
-              <option value="receive">Somente receber</option>
             </select>
           </label>
 
@@ -78,14 +77,6 @@
               v-model="account.openingBalance"
               inputmode="decimal"
               placeholder="0,00"
-            />
-          </label>
-
-          <label>
-            Chave Pix (opcional)
-            <input
-              v-model="account.pixKey"
-              placeholder="CPF, CNPJ, e-mail ou aleatória"
             />
           </label>
 
@@ -151,6 +142,14 @@
           <strong>{{ money(state.totals.exits) }}</strong>
           <small>{{ exitCount }} movimentações</small>
         </article>
+      </section>
+
+      <section class="highlight-card">
+        <div class="highlight-content">
+          <span>Total Lucão Mandar (hoje)</span>
+          <strong>{{ money(totalLucaoHoje) }}</strong>
+          <small>Valor acumulado dos lançamentos do dia</small>
+        </div>
       </section>
 
       <section
@@ -244,14 +243,12 @@
         <select v-model="newBank.purpose">
           <option value="both">Pagar e receber</option>
           <option value="pay">Somente pagar</option>
-          <option value="receive">Somente receber</option>
         </select>
         <input
           v-model="newBank.openingBalance"
           inputmode="decimal"
           placeholder="Créditos iniciais"
         />
-        <input v-model="newBank.pixKey" placeholder="Chave Pix opcional" />
         <button
           class="blue"
           :disabled="actionBusy"
@@ -292,14 +289,6 @@
           </small>
 
           <div
-            v-if="account.pix_key"
-            class="pix-key"
-            :title="account.pix_key"
-          >
-            Pix: {{ account.pix_key }}
-          </div>
-
-          <div
             v-if="state.day.status === 'open'"
             class="bank-actions"
           >
@@ -328,7 +317,7 @@
         <div class="section-title">
           <div>
             <span class="eyebrow">LANÇAMENTOS</span>
-            <h2>Registrar depósito</h2>
+            <h2>{{ editingId ? 'Editar depósito' : 'Registrar depósito' }}</h2>
           </div>
         </div>
 
@@ -348,13 +337,23 @@
             <input v-model="launchForm.saque" inputmode="decimal" placeholder="0,00" />
           </label>
 
-          <button
-            class="blue"
-            :disabled="actionBusy"
-            @click="launch"
-          >
-            {{ pendingAction === 'launch' ? 'Lançando...' : 'Lançar' }}
-          </button>
+          <div class="launch-actions">
+            <button
+              class="blue"
+              :disabled="actionBusy"
+              @click="launch"
+            >
+              {{ pendingAction === 'launch' ? 'Lançando...' : (editingId ? 'Salvar' : 'Lançar') }}
+            </button>
+            <button
+              v-if="editingId"
+              class="soft"
+              :disabled="actionBusy"
+              @click="cancelEdit"
+            >
+              Cancelar
+            </button>
+          </div>
         </div>
 
         <div v-if="numberValue(launchForm.deposito)" class="launch-preview">
@@ -383,6 +382,7 @@
                 <th>Lucro Blog. (12%)</th>
                 <th>Mandar Lucão (50%)</th>
                 <th>Saque/Ret</th>
+                <th v-if="state.day.status === 'open'">Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -394,6 +394,22 @@
                 <td>{{ money(l.lucroBlogueira) }}</td>
                 <td><strong>{{ money(l.lucao) }}</strong></td>
                 <td>{{ l.saque ? money(l.saque) : '—' }}</td>
+                <td v-if="state.day.status === 'open'" class="actions-cell">
+                  <button
+                    class="compact blue"
+                    :disabled="actionBusy"
+                    @click="editLaunch(l)"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    class="compact danger"
+                    :disabled="actionBusy"
+                    @click="deleteLaunch(l)"
+                  >
+                    Excluir
+                  </button>
+                </td>
               </tr>
             </tbody>
             <tfoot>
@@ -401,6 +417,7 @@
                 <td colspan="5">Total Mandar Lucão</td>
                 <td><strong>{{ money(totalLucaoHoje) }}</strong></td>
                 <td></td>
+                <td v-if="state.day.status === 'open'"></td>
               </tr>
             </tfoot>
           </table>
@@ -506,22 +523,22 @@ const draftAccounts = reactive([
   {
     name: '',
     purpose: 'both',
-    openingBalance: '',
-    pixKey: ''
+    openingBalance: ''
   }
 ])
 
 const newBank = reactive({
   name: '',
   purpose: 'both',
-  openingBalance: '',
-  pixKey: ''
+  openingBalance: ''
 })
 
 const closing = reactive({
   profitTotal: '',
   adjustments: ''
 })
+
+const editingId = ref(null)
 
 const launchForm = reactive({
   casa: '',
@@ -558,8 +575,7 @@ function emptyAccount() {
   return {
     name: '',
     purpose: 'both',
-    openingBalance: '',
-    pixKey: ''
+    openingBalance: ''
   }
 }
 
@@ -745,7 +761,7 @@ async function load() {
   } catch (error) {
     alert(
       error.response?.data?.error ||
-      'Não foi possível carregar a operação de créditos.'
+      'Não foi possível carregar a Operação do Dia.'
     )
   } finally {
     loading.value = false
@@ -795,8 +811,7 @@ async function addBank() {
     Object.assign(newBank, {
       name: '',
       purpose: 'both',
-      openingBalance: '',
-      pixKey: ''
+      openingBalance: ''
     })
     showNewBank.value = false
   } catch (error) {
@@ -898,11 +913,18 @@ async function launch() {
     return
   }
 
+  const isEditing = editingId.value !== null
   pendingAction.value = 'launch'
 
   try {
-    const { data } = await api.post(
-      `/bank-operations/days/${state.day.id}/launches`,
+    const url = isEditing
+      ? `/bank-operations/days/${state.day.id}/launches/${editingId.value}`
+      : `/bank-operations/days/${state.day.id}/launches`
+
+    const method = isEditing ? api.put : api.post
+
+    const { data } = await method(
+      url,
       {
         casa: launchForm.casa,
         deposito: launchForm.deposito,
@@ -913,10 +935,48 @@ async function launch() {
 
     apply(data)
     Object.assign(launchForm, { casa: '', deposito: '', saque: '' })
+    editingId.value = null
   } catch (error) {
     alert(
       error.response?.data?.error ||
       'Não foi possível registrar o lançamento.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+function cancelEdit() {
+  Object.assign(launchForm, { casa: '', deposito: '', saque: '' })
+  editingId.value = null
+}
+
+function editLaunch(l) {
+  editingId.value = l.id
+  launchForm.casa = l.casa
+  launchForm.deposito = String(l.deposito)
+  launchForm.saque = l.saque ? String(l.saque) : ''
+  window.scrollTo({ top: document.querySelector('.launch-panel')?.offsetTop - 20, behavior: 'smooth' })
+}
+
+async function deleteLaunch(l) {
+  if (actionBusy.value) return
+
+  if (!confirm(`Excluir lançamento de ${l.casa} (R$ ${l.deposito})?`)) return
+
+  pendingAction.value = `delete-launch-${l.id}`
+
+  try {
+    const { data } = await api.delete(
+      `/bank-operations/days/${state.day.id}/launches/${l.id}`,
+      authHeaders()
+    )
+
+    apply(data)
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível excluir o lançamento.'
     )
   } finally {
     pendingAction.value = ''
@@ -1049,7 +1109,7 @@ onMounted(load)
 .account-editor{display:grid;gap:14px;margin:24px 0}
 .draft-card{
   display:grid;
-  grid-template-columns:42px 1.3fr 1fr 1fr 1.5fr 40px;
+  grid-template-columns:42px 1.3fr 1fr 1fr 40px;
   gap:12px;
   align-items:end;
   background:white;
@@ -1114,7 +1174,7 @@ button:disabled:hover{transform:none}
 .preview{background:#fff3e8;border-radius:14px;padding:12px}
 .preview span{display:block;font-size:12px;color:#9a632d}
 .preview strong{font-size:22px;color:var(--orange)}
-.new-bank{display:grid;grid-template-columns:1.2fr 1fr 1fr 1.5fr auto;gap:12px}
+.new-bank{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:12px}
 .bank-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .bank-card{padding:20px}
 .bank-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -1140,6 +1200,18 @@ button:disabled:hover{transform:none}
 .bank-actions button{flex:1}
 .launch-panel{display:grid;gap:18px}
 .launch-form{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:12px;align-items:end}
+.launch-actions{display:flex;gap:8px}
+.compact{padding:6px 10px;font-size:12px}
+.actions-cell{display:flex;gap:6px}
+.highlight-card{
+  background:linear-gradient(110deg,#1a6b3c,#28a05a);
+  border-radius:22px;padding:22px;color:white;
+  box-shadow:0 10px 32px #1a6b3c40
+}
+.highlight-content{display:flex;flex-direction:column;gap:4px}
+.highlight-content span{color:#d4f5e3;font-size:14px;font-weight:700}
+.highlight-content strong{font-size:36px}
+.highlight-content small{color:#b0e8c8}
 .launch-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;background:#eef4ff;border-radius:14px;padding:16px}
 .launch-preview div{text-align:center}
 .launch-preview span{display:block;font-size:12px;color:var(--muted)}
@@ -1163,6 +1235,7 @@ th{font-size:12px;color:var(--muted)}
   .summary-grid{grid-template-columns:repeat(2,1fr)}
   .bank-grid{grid-template-columns:repeat(2,1fr)}
   .draft-card,.close-panel,.new-bank,.launch-form{grid-template-columns:1fr 1fr}
+  .launch-actions{grid-column:1/-1}
   .draft-number{display:none}
   .closing-result{grid-template-columns:1fr 1fr}
 }
