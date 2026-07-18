@@ -3,7 +3,7 @@
     <header class="hero">
       <div>
         <span class="eyebrow">CONTROLE OPERACIONAL</span>
-        <h1>Operação de Créditos</h1>
+        <h1>Operação Meia do Lucao</h1>
         <p>
           Organize os bancos do turno, registre entradas e saídas
           de créditos e descubra o repasse do fechamento.
@@ -113,7 +113,7 @@
             :disabled="actionBusy"
             @click="addDraft"
           >
-            + Adicionar banco
+            +bancos
           </button>
           <button
             class="blue"
@@ -232,7 +232,7 @@
           :disabled="actionBusy"
           @click="showNewBank = !showNewBank"
         >
-          + Adicionar banco
+           +bancos
         </button>
       </section>
 
@@ -312,14 +312,6 @@
             </button>
           </div>
 
-          <button
-            v-if="account.pix_key && account.purpose !== 'pay'"
-            class="pix-button"
-            :disabled="actionBusy"
-            @click="generatePix(account)"
-          >
-            Gerar Pix sem valor
-          </button>
         </article>
       </section>
 
@@ -406,119 +398,9 @@
         </div>
       </section>
 
-      <section v-if="pix.show" class="panel pix-panel">
-        <div>
-          <span class="eyebrow">PIX ESTÁTICO SEM VALOR</span>
-          <h2>{{ pix.bankName }}</h2>
-          <p>
-            O pagador informa o valor no aplicativo bancário.
-            O CorePay não cobra nem confirma automaticamente.
-          </p>
-        </div>
 
-        <label>
-          Nome do recebedor
-          <input v-model="pix.merchantName" placeholder="Nome ou empresa" />
-        </label>
 
-        <label>
-          Cidade
-          <input v-model="pix.merchantCity" placeholder="Ex.: SAO PAULO" />
-        </label>
 
-        <button
-          class="blue"
-          :disabled="actionBusy"
-          @click="createPixPayload"
-        >
-          {{ pendingAction === 'pix' ? 'Gerando...' : 'Gerar copia e cola' }}
-        </button>
-
-        <textarea
-          v-if="pix.payload"
-          readonly
-          :value="pix.payload"
-        />
-
-        <button
-          v-if="pix.payload"
-          class="green-button"
-          @click="copyPix"
-        >
-          Copiar código Pix
-        </button>
-      </section>
-
-      <section class="panel movements">
-        <div class="section-title">
-          <div>
-            <span class="eyebrow">CONCILIAÇÃO</span>
-            <h2>Movimentações do dia</h2>
-          </div>
-          <span class="count-chip">
-            {{ state.movements.length }} registros
-          </span>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Horário</th>
-                <th>Banco</th>
-                <th>Movimento</th>
-                <th>Valor</th>
-                <th>Observação</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="movement in state.movements"
-                :key="movement.id"
-                :class="{ 'reversed-row': movement.reversed }"
-              >
-                <td>{{ formatDate(movement.created_at) }}</td>
-                <td>{{ movement.account_name }}</td>
-                <td>
-                  <span :class="['movement', movement.type]">
-                    {{
-                      movement.reversed
-                        ? 'Estornada'
-                        : movement.type === 'entry'
-                          ? 'Entrada'
-                          : 'Saída'
-                    }}
-                  </span>
-                </td>
-                <td>{{ money(movement.amount) }}</td>
-                <td>
-                  {{ movement.note || '—' }}
-                  <small v-if="movement.reversed" class="reversal-note">
-                    Motivo: {{ movement.reversal_reason }}
-                  </small>
-                </td>
-                <td>
-                  <button
-                    v-if="state.day.status === 'open' && !movement.reversed"
-                    class="danger compact-button"
-                    :disabled="actionBusy"
-                    @click="reverseMovement(movement)"
-                  >
-                    Estornar
-                  </button>
-                  <span v-else>—</span>
-                </td>
-              </tr>
-              <tr v-if="!state.movements.length">
-                <td colspan="6" class="empty-row">
-                  Nenhuma movimentação registrada.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
 
     </template>
 
@@ -630,15 +512,6 @@ const newBank = reactive({
 const closing = reactive({
   profitTotal: '',
   adjustments: ''
-})
-
-const pix = reactive({
-  show: false,
-  bankName: '',
-  pixKey: '',
-  merchantName: '',
-  merchantCity: '',
-  payload: ''
 })
 
 const launchForm = reactive({
@@ -774,7 +647,7 @@ function money(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }) + ' pts'
+  }) + ' R$'
 }
 
 function purposeName(value) {
@@ -813,14 +686,6 @@ function resetTransientState() {
   Object.assign(newBank, emptyAccount())
   resetClosing()
   showNewBank.value = false
-  Object.assign(pix, {
-    show: false,
-    bankName: '',
-    pixKey: '',
-    merchantName: '',
-    merchantCity: '',
-    payload: ''
-  })
 }
 
 function apply(data) {
@@ -1065,35 +930,6 @@ async function closeDay() {
   }
 }
 
-async function reverseMovement(movement) {
-  if (actionBusy.value || movement.reversed) return
-
-  const reason = prompt(
-    `Motivo do estorno de ${money(movement.amount)} em ${movement.account_name}:`
-  )
-
-  if (!reason) return
-
-  pendingAction.value = `reverse-${movement.id}`
-
-  try {
-    const { data } = await api.post(
-      `/bank-operations/days/${state.day.id}/movements/${movement.id}/reverse`,
-      { reason },
-      authHeaders()
-    )
-
-    apply(data)
-  } catch (error) {
-    alert(
-      error.response?.data?.error ||
-      'Não foi possível estornar a movimentação.'
-    )
-  } finally {
-    pendingAction.value = ''
-  }
-}
-
 async function resumeDay(day) {
   if (actionBusy.value) return
 
@@ -1115,46 +951,6 @@ async function resumeDay(day) {
   } finally {
     pendingAction.value = ''
   }
-}
-
-function generatePix(account) {
-  Object.assign(pix, {
-    show: true,
-    bankName: account.name,
-    pixKey: account.pix_key,
-    payload: ''
-  })
-}
-
-async function createPixPayload() {
-  if (actionBusy.value) return
-  pendingAction.value = 'pix'
-
-  try {
-    const { data } = await api.post(
-      '/bank-operations/pix-static',
-      {
-        pixKey: pix.pixKey,
-        merchantName: pix.merchantName,
-        merchantCity: pix.merchantCity
-      },
-      authHeaders()
-    )
-
-    pix.payload = data.payload
-  } catch (error) {
-    alert(
-      error.response?.data?.error ||
-      'Não foi possível gerar o Pix.'
-    )
-  } finally {
-    pendingAction.value = ''
-  }
-}
-
-async function copyPix() {
-  await navigator.clipboard.writeText(pix.payload)
-  alert('Pix copia e cola copiado.')
 }
 
 onMounted(load)
@@ -1302,7 +1098,6 @@ button:disabled:hover{transform:none}
   font-size:12px
 }
 .bank-actions button{flex:1}
-.pix-button{width:100%;margin-top:10px;background:#5b61d0}
 .launch-panel{display:grid;gap:18px}
 .launch-form{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:12px;align-items:end}
 .launch-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;background:#eef4ff;border-radius:14px;padding:16px}
@@ -1315,32 +1110,26 @@ button:disabled:hover{transform:none}
 .launches-table-wrap th{font-size:11px;color:var(--muted)}
 .launch-total{background:#eef4ff;font-weight:800}
 .launch-total td{border-bottom:none}
-.pix-panel{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:14px;align-items:end}
-.pix-panel textarea{grid-column:1/-2;min-height:100px}
-.movements table{width:100%;border-collapse:collapse;margin-top:16px}
+
 th,td{text-align:left;padding:13px;border-bottom:1px solid #e4e9f2}
 th{font-size:12px;color:var(--muted)}
 .movement{padding:6px 9px;border-radius:999px;font-size:12px;font-weight:800}
 .movement.entry{background:#ddf8e8;color:#188a4a}
 .movement.exit{background:#fff0e3;color:#ce650f}
-.reversed-row{opacity:.68;background:#fff4f4}
-.reversed-row td:nth-child(4){text-decoration:line-through}
-.reversal-note{display:block;margin-top:4px;color:#b12e36}
 .compact-button{padding:7px 10px;font-size:12px}
 .table-wrap{overflow:auto}
 .empty,.empty-row{text-align:center;color:var(--muted);padding:35px}
 @media(max-width:1000px){
   .summary-grid{grid-template-columns:repeat(2,1fr)}
   .bank-grid{grid-template-columns:repeat(2,1fr)}
-  .draft-card,.close-panel,.new-bank,.pix-panel,.launch-form{grid-template-columns:1fr 1fr}
+  .draft-card,.close-panel,.new-bank,.launch-form{grid-template-columns:1fr 1fr}
   .draft-number{display:none}
   .closing-result{grid-template-columns:1fr 1fr}
 }
 @media(max-width:640px){
   .hero,.section-title,.banks-head,.opening-footer{align-items:stretch;flex-direction:column}
-  .summary-grid,.bank-grid,.closing-result,.draft-card,.close-panel,.new-bank,.pix-panel{
+  .summary-grid,.bank-grid,.closing-result,.draft-card,.close-panel,.new-bank{
     grid-template-columns:1fr
   }
-  .pix-panel textarea{grid-column:auto}
 }
 </style>
