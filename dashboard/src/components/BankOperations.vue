@@ -66,8 +66,8 @@
           <label>
             Finalidade
             <select v-model="account.purpose">
-              <option value="both">Pagar e receber</option>
-              <option value="pay">Somente pagar</option>
+              <option value="both">Pagar e Receber</option>
+              <option value="pay">Pagar</option>
             </select>
           </label>
 
@@ -241,8 +241,8 @@
       >
         <input v-model="newBank.name" placeholder="Nome do banco" />
         <select v-model="newBank.purpose">
-          <option value="both">Pagar e receber</option>
-          <option value="pay">Somente pagar</option>
+          <option value="both">Pagar e Receber</option>
+          <option value="pay">Pagar</option>
         </select>
         <input
           v-model="newBank.openingBalance"
@@ -358,15 +358,15 @@
 
         <div v-if="numberValue(launchForm.deposito)" class="launch-preview">
           <div>
-            <span>Banca (88%)</span>
+            <span>Banca</span>
             <strong>{{ money(launchCalculos.banca) }}</strong>
           </div>
           <div>
-            <span>Lucro Blogueira (12%)</span>
+            <span>Lucro Blogueira</span>
             <strong>{{ money(launchCalculos.lucroBlogueira) }}</strong>
           </div>
           <div>
-            <span>Mandar Lucão (50%)</span>
+            <span>Mandar Lucão</span>
             <strong>{{ money(launchCalculos.lucao) }}</strong>
           </div>
         </div>
@@ -378,9 +378,9 @@
                 <th>Horário</th>
                 <th>Casa</th>
                 <th>Depósito</th>
-                <th>Banca (88%)</th>
-                <th>Lucro Blog. (12%)</th>
-                <th>Mandar Lucão (50%)</th>
+                <th>Banca</th>
+                <th>Lucro Blog.</th>
+                <th>Mandar Lucão</th>
                 <th>Saque/Ret</th>
                 <th v-if="state.day.status === 'open'">Ações</th>
               </tr>
@@ -546,10 +546,35 @@ const launchForm = reactive({
   saque: ''
 })
 
+const lucroTabela = {
+  300: 60, 350: 60, 400: 60, 450: 60, 500: 60,
+  550: 70, 600: 80, 650: 90, 700: 90, 750: 100,
+  800: 100, 850: 110, 900: 110, 950: 120, 1000: 120,
+  1050: 125, 1100: 130, 1150: 135, 1200: 140,
+  1250: 145, 1300: 150, 1350: 155, 1400: 160,
+  1450: 165, 1500: 170, 1600: 190, 1650: 195,
+  1700: 200, 1750: 205, 1800: 210, 1850: 215,
+  1900: 220, 1950: 225, 2000: 240, 2050: 245,
+  2100: 250, 2150: 255, 2200: 260, 2250: 265,
+  2300: 270, 2350: 275, 2400: 280, 2450: 285,
+  2500: 290, 2600: 310, 2650: 315, 2700: 320,
+  2750: 325, 2800: 330, 2850: 335, 2900: 340,
+  2950: 345, 3000: 360
+}
+
+function calcularLucro(deposito) {
+  const valores = Object.keys(lucroTabela).map(Number).sort((a, b) => a - b)
+  let lucro = 0
+  for (const valor of valores) {
+    if (deposito >= valor) lucro = lucroTabela[valor]
+  }
+  return lucro
+}
+
 const launchCalculos = computed(() => {
   const deposito = numberValue(launchForm.deposito)
-  const banca = Math.round(deposito * 0.88 * 100) / 100
-  const lucroBlogueira = Math.round(deposito * 0.12 * 100) / 100
+  const lucroBlogueira = calcularLucro(deposito)
+  const banca = deposito - lucroBlogueira
   const lucao = Math.round(lucroBlogueira * 0.5 * 100) / 100
   return { banca, lucroBlogueira, lucao }
 })
@@ -677,7 +702,7 @@ function money(value) {
 
 function purposeName(value) {
   return {
-    pay: 'PAGADOR',
+    pay: 'PAGAR',
     receive: 'RECEBEDOR',
     both: 'PAGAR E RECEBER'
   }[value] || value

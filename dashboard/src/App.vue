@@ -36,7 +36,7 @@
           :class="{ active: tab === 'banking' }"
           @click="tab='banking'"
         >
-          Operação de Créditos
+          Operação Diária
         </button>
 
         <button

@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../middlewares/auth');
 const db = require('../db/database');
 const sheets = require('../services/sheetsService');
+const { calcularLucro, calcularBanca } = require('../services/sheetsService');
 
 const router = express.Router();
 
@@ -895,9 +896,11 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
       });
     }
 
-    const bancaCents = Math.round(depositoCents * 0.88);
-    const lucroCents = Math.round(depositoCents * 0.12);
-    const lucaoCents = Math.round(lucroCents * 0.5);
+    const depositoValue = depositoCents / 100;
+    const lucroValue = calcularLucro(depositoValue);
+    const lucroCents = Math.round(lucroValue * 100);
+    const bancaCents = depositoCents - lucroCents;
+    const lucaoCents = Math.round(lucroCents / 2);
 
     db.prepare(`
       INSERT INTO bank_operation_launches (
@@ -977,9 +980,11 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
     });
   }
 
-  const bancaCents = Math.round(depositoCents * 0.88);
-  const lucroCents = Math.round(depositoCents * 0.12);
-  const lucaoCents = Math.round(lucroCents * 0.5);
+  const depositoValue = depositoCents / 100;
+  const lucroValue = calcularLucro(depositoValue);
+  const lucroCents = Math.round(lucroValue * 100);
+  const bancaCents = depositoCents - lucroCents;
+  const lucaoCents = Math.round(lucroCents / 2);
 
   db.prepare(`
     UPDATE bank_operation_launches
