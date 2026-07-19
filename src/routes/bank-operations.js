@@ -368,10 +368,21 @@ function serialize(req, day) {
     LIMIT 300
   `).all(day.id);
 
-  const totalLucaoCents = launches.reduce(
-    (sum, l) => sum + l.lucao_cents,
+  const totalSacado = launches.reduce(
+    (sum, l) => sum + l.saque_cents,
     0
   );
+  const totalBanca = launches.reduce(
+    (sum, l) => sum + l.banca_cents,
+    0
+  );
+  const totalLucro = launches.reduce(
+    (sum, l) => sum + l.lucro_blogueira_cents,
+    0
+  );
+  const liquidoCents = totalSacado - totalBanca;
+  const metadeCents = Math.round(liquidoCents / 2);
+  const totalLucaoCents = metadeCents - totalLucro;
 
   const movements = db.prepare(`
     SELECT
@@ -981,8 +992,7 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
     const lucroValue = calcularLucro(depositoValue);
     const lucroCents = Math.round(lucroValue * 100);
     const bancaCents = depositoCents - lucroCents;
-    const netProfit = saqueCents - depositoCents;
-    const lucaoCents = netProfit > 0 ? Math.round(netProfit / 2) : 0;
+    const lucaoCents = 0;
 
     db.transaction(() => {
       const freshAccount = db.prepare(`
@@ -1120,8 +1130,7 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
   const lucroValue = calcularLucro(depositoValue);
   const lucroCents = Math.round(lucroValue * 100);
   const bancaCents = depositoCents - lucroCents;
-  const netProfit = saqueCents - depositoCents;
-  const lucaoCents = netProfit > 0 ? Math.round(netProfit / 2) : 0;
+  const lucaoCents = 0;
 
   db.transaction(() => {
     if (launch.movement_id) {
@@ -1299,18 +1308,39 @@ router.post('/days/:dayId/close', auth, (req, res) => {
     });
   }
 
-  const profit = toCents(req.body.profitTotal);
   const adjustments = toCents(
     req.body.adjustments || 0,
     true
   );
 
-  if (profit == null || adjustments == null) {
+  if (adjustments == null) {
     return res.status(400).json({
       ok: false,
-      error: 'Lucro ou ajustes inválidos.'
+      error: 'Ajustes inválidos.'
     });
   }
+
+  const launches = db.prepare(`
+    SELECT saque_cents, banca_cents, lucro_blogueira_cents
+    FROM bank_operation_launches
+    WHERE day_id = ?
+  `).all(day.id);
+
+  const totalSacado = launches.reduce(
+    (sum, l) => sum + l.saque_cents,
+    0
+  );
+  const totalBanca = launches.reduce(
+    (sum, l) => sum + l.banca_cents,
+    0
+  );
+  const totalLucro = launches.reduce(
+    (sum, l) => sum + l.lucro_blogueira_cents,
+    0
+  );
+  const liquidoCents = totalSacado - totalBanca;
+  const metadeCents = Math.round(liquidoCents / 2);
+  const mandarLucaoCents = metadeCents - totalLucro;
 
   const accounts = db.prepare(`
     SELECT current_balance_cents
@@ -1328,11 +1358,10 @@ router.post('/days/:dayId/close', auth, (req, res) => {
     day.opening_total_cents - closing
   );
 
-  const operatorShare = Math.round(profit / 2);
-  const amountToSend = Math.max(
-    0,
-    replacement + operatorShare + adjustments
-  );
+  // A planilha CHINO define o fechamento enviado ao Lucão como:
+  // (sacado - banca) / 2 - lucro já recebido, acrescido apenas de ajustes manuais.
+  // A reposição de capital continua registrada separadamente, sem alterar esse valor.
+  const amountToSend = mandarLucaoCents + adjustments;
 
   db.prepare(`
     UPDATE bank_operation_days
@@ -1347,8 +1376,8 @@ router.post('/days/:dayId/close', auth, (req, res) => {
     WHERE id = ?
   `).run(
     closing,
-    profit,
-    operatorShare,
+    totalLucro,
+    metadeCents,
     replacement,
     adjustments,
     amountToSend,

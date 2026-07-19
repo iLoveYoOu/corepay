@@ -150,8 +150,8 @@
       <section class="highlight-card">
         <div class="highlight-content">
           <span>Total Lucão Mandar (hoje)</span>
-          <strong>{{ money(totalLucaoHoje) }}</strong>
-          <small>Valor acumulado dos lançamentos do dia</small>
+          <strong :class="totalLucaoHoje < 0 ? 'negative' : ''">{{ money(totalLucaoHoje) }}</strong>
+          <small>Negativo = crédito/compensação a receber do Lucão</small>
         </div>
       </section>
 
@@ -160,11 +160,11 @@
         class="closing-result"
       >
         <div>
-          <span>Lucro total</span>
+          <span>Taxa blogueira total</span>
           <strong>{{ money(state.day.profitTotal) }}</strong>
         </div>
         <div>
-          <span>Metade do operador</span>
+          <span>METADE do operador</span>
           <strong>{{ money(state.day.operatorShare) }}</strong>
         </div>
         <div>
@@ -173,7 +173,8 @@
         </div>
         <div class="send-total">
           <span>Lucão deve enviar</span>
-          <strong>{{ money(state.day.amountToSend) }}</strong>
+          <strong :class="state.day.amountToSend < 0 ? 'negative' : ''">{{ money(state.day.amountToSend) }}</strong>
+          <small v-if="state.day.amountToSend < 0">Negativo = crédito a receber do Lucão</small>
         </div>
       </section>
 
@@ -185,19 +186,35 @@
           <span class="eyebrow">FECHAMENTO</span>
           <h2>Calcular repasse do dia</h2>
           <p>
-            Repasse = reposição do capital + metade do lucro + ajustes.
+            Regra CHINO: LÍQUIDO = total sacado − total banca / METADE = LÍQUIDO ÷ 2 / LUCÃO = METADE − taxa blogueira.
+            Valores negativos = crédito/compensação a receber do Lucão.
           </p>
         </div>
 
-        <label>
-          Lucro total que caiu para o Lucão
-          <input
-            v-model="closing.profitTotal"
-            inputmode="decimal"
-            required
-            placeholder="0,00"
-          />
-        </label>
+        <div class="preview">
+          <span>Total sacado</span>
+          <strong>{{ money(closeSacado) }}</strong>
+        </div>
+        <div class="preview">
+          <span>Total banca</span>
+          <strong>{{ money(closeBanca) }}</strong>
+        </div>
+        <div class="preview">
+          <span>LÍQUIDO (sacado − banca)</span>
+          <strong>{{ money(closeLiquido) }}</strong>
+        </div>
+        <div class="preview">
+          <span>METADE do operador</span>
+          <strong>{{ money(closeMetade) }}</strong>
+        </div>
+        <div class="preview">
+          <span>Taxa blogueira (já retida)</span>
+          <strong>{{ money(closeLucro) }}</strong>
+        </div>
+        <div class="preview">
+          <span>Capital a repor</span>
+          <strong>{{ money(closeReplacement) }}</strong>
+        </div>
 
         <label>
           Ajustes ou tarifas
@@ -208,14 +225,14 @@
           />
         </label>
 
-        <div class="preview">
-          <span>Estimativa de repasse</span>
-          <strong>{{ money(closePreview) }}</strong>
+        <div class="preview highlight">
+          <span>Lucão deve enviar (negativo = receber)</span>
+          <strong :class="closePreview < 0 ? 'negative' : ''">{{ money(closePreview) }}</strong>
         </div>
 
         <button
           class="orange"
-          :disabled="actionBusy || !profitFilled"
+          :disabled="actionBusy"
           @click="closeDay"
         >
           {{ pendingAction === 'close' ? 'Fechando...' : 'Confirmar fechamento' }}
@@ -574,7 +591,6 @@ const newBank = reactive({
 })
 
 const closing = reactive({
-  profitTotal: '',
   adjustments: ''
 })
 
@@ -629,15 +645,16 @@ const launchCalculos = computed(() => {
 
   const lucroBlogueira = calcularLucro(deposito)
   const banca = deposito - lucroBlogueira
-  const lucroLiquido = saque - deposito
-  const lucao = lucroLiquido > 0
-    ? Math.round((lucroLiquido * 100) / 2) / 100
-    : 0
+  const lucao = 0
   return { banca, lucroBlogueira, lucao }
 })
 
 const totalLucaoHoje = computed(() => {
-  return state.launches.reduce((sum, l) => sum + (l.lucao || 0), 0)
+  const totalSacado = state.launches.reduce((sum, l) => sum + (l.saque || 0), 0)
+  const totalBanca = state.launches.reduce((sum, l) => sum + (l.banca || 0), 0)
+  const totalLucro = state.launches.reduce((sum, l) => sum + (l.lucroBlogueira || 0), 0)
+  const metade = Math.round((totalSacado - totalBanca) * 100) / 200
+  return Math.round((metade - totalLucro) * 100) / 100
 })
 
 const movementAttempt = reactive({
@@ -706,14 +723,22 @@ function numberValue(value) {
 }
 
 const actionBusy = computed(() => Boolean(pendingAction.value))
-const profitFilled = computed(() => {
-  const profit = parsedNumber(closing.profitTotal)
 
-  return (
-    String(closing.profitTotal ?? '').trim() !== '' &&
-    Number.isFinite(profit) &&
-    profit >= 0
-  )
+const closeSacado = computed(() =>
+  state.launches.reduce((sum, l) => sum + (l.saque || 0), 0)
+)
+const closeBanca = computed(() =>
+  state.launches.reduce((sum, l) => sum + (l.banca || 0), 0)
+)
+const closeLucro = computed(() =>
+  state.launches.reduce((sum, l) => sum + (l.lucroBlogueira || 0), 0)
+)
+const closeLiquido = computed(() => closeSacado.value - closeBanca.value)
+const closeMetade = computed(() => Math.round(closeLiquido.value * 100) / 200)
+const closeReplacement = computed(() => Math.max(0, numberValue(state.totals.opening) - numberValue(state.totals.current)))
+const closePreview = computed(() => {
+  const mandarLucao = closeMetade.value - closeLucro.value
+  return Math.round((mandarLucao + numberValue(closing.adjustments)) * 100) / 100
 })
 
 const draftTotal = computed(() =>
@@ -735,20 +760,6 @@ const exitCount = computed(() =>
   ).length
 )
 
-const closePreview = computed(() => {
-  const replacement = Math.max(
-    0,
-    numberValue(state.totals.opening) -
-      numberValue(state.totals.current)
-  )
-
-  return Math.max(
-    0,
-    replacement +
-      numberValue(closing.profitTotal) / 2 +
-      numberValue(closing.adjustments)
-  )
-})
 
 function money(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
@@ -778,7 +789,6 @@ function formatDate(value) {
 
 function resetClosing() {
   Object.assign(closing, {
-    profitTotal: '',
     adjustments: ''
   })
   showClose.value = false
@@ -1114,11 +1124,6 @@ async function deleteLaunch(l) {
 async function closeDay() {
   if (actionBusy.value) return
 
-  if (!profitFilled.value) {
-    alert('Informe o lucro total antes de fechar o dia.')
-    return
-  }
-
   if (!confirm('Confirma o fechamento definitivo deste dia?')) {
     return
   }
@@ -1128,7 +1133,7 @@ async function closeDay() {
   try {
     const { data } = await api.post(
       `/bank-operations/days/${state.day.id}/close`,
-      closing,
+      { adjustments: closing.adjustments },
       authHeaders()
     )
 
@@ -1319,6 +1324,7 @@ button:disabled:hover{transform:none}
 }
 .closing-result span{color:#cbd3e5}
 .closing-result strong{font-size:23px}
+.negative{color:#ff6b6b}
 .send-total{background:#ffffff18;border-radius:14px;padding:14px}
 .close-panel{
   display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr auto;
@@ -1368,6 +1374,7 @@ button:disabled:hover{transform:none}
 .launch-actions{display:flex;gap:8px}
 .compact{padding:6px 10px;font-size:12px}
 .actions-cell{display:flex;gap:6px}
+.highlight-card :deep(.negative){color:#ffcccc}
 .highlight-card{
   background:linear-gradient(110deg,#1a6b3c,#28a05a);
   border-radius:22px;padding:22px;color:white;

@@ -685,6 +685,123 @@ async function run() {
   });
   assert(revoked.status === 401, 'Sessão antiga não foi revogada', revoked);
 
+  // ── CHINO closing tests ──
+  const chinoSession = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: 'operador.smoke@corepay.local',
+      password: 'NovaSenha123!'
+    })
+  });
+  assert(chinoSession.status === 200, 'Login CHINO falhou', chinoSession);
+
+  const chinoHeaders = {
+    authorization: `Bearer ${chinoSession.body.token}`
+  };
+
+  const chinoCompanyId = secondCompany.body.companyId;
+  const chinoUserId = operator.body.user_id;
+
+  let chinoTestDay = 3;
+
+  function createTestDay() {
+    const operationDate = `2025-01-${String(chinoTestDay++).padStart(2, '0')}`;
+    const result = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents)
+      VALUES (?, ?, ?, 'open', ?)
+    `).run(chinoUserId, chinoCompanyId, operationDate, 5000000);
+    const dayId = Number(result.lastInsertRowid);
+    db.prepare(`
+      INSERT INTO bank_operation_accounts
+        (day_id, name, purpose, opening_balance_cents, current_balance_cents)
+      VALUES (?, ?, 'both', ?, ?)
+    `).run(dayId, 'CHINO Conta', 5000000, 5000000);
+    return dayId;
+  }
+
+  function addLaunch(dayId, depositoCents, saqueCents, bancaCents, lucroCents) {
+    db.prepare(`
+      INSERT INTO bank_operation_launches
+        (day_id, user_id, casa, deposito_cents, banca_cents,
+         lucro_blogueira_cents, lucao_cents, saque_cents)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(dayId, chinoUserId, 'CHINO Teste', depositoCents, bancaCents, lucroCents, saqueCents);
+
+    db.prepare(`
+      UPDATE bank_operation_accounts
+      SET current_balance_cents = current_balance_cents - ?
+      WHERE day_id = ? AND active = 1
+    `).run(depositoCents, dayId);
+  }
+
+  function assertChinoClose(day, expected) {
+    assert(
+      Number(day.profitTotal) === Number(expected.profitTotal),
+      `CHINO profitTotal esperado ${expected.profitTotal} recebido ${day.profitTotal}`,
+      { day, expected }
+    );
+    assert(
+      Number(day.operatorShare) === Number(expected.operatorShare),
+      `CHINO operatorShare esperado ${expected.operatorShare} recebido ${day.operatorShare}`,
+      { day, expected }
+    );
+    assert(
+      Number(day.amountToSend) === Number(expected.amountToSend),
+      `CHINO amountToSend esperado ${expected.amountToSend} recebido ${day.amountToSend}`,
+      { day, expected }
+    );
+  }
+
+  // Test 1: CHINO example from sheet 1507 (negative)
+  // deposito=32722, sacado=31803, banca=28680, lucro=4020 (R$)
+  // LIQUIDO = 31803 - 28680 = 3123
+  // METADE = 3123/2 = 1561.50
+  // MANDAR_LUCAO = 1561.50 - 4020 = -2458.50
+  {
+    const dayId = createTestDay();
+    addLaunch(dayId, 3272200, 3180300, 2868000, 402000);
+    const result = await request(`/bank-operations/days/${dayId}/close`, {
+      method: 'POST',
+      headers: chinoHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(result.status === 200, 'CHINO negativo: fechamento falhou', result);
+    assertChinoClose(result.body.day, { profitTotal: 4020, operatorShare: 1561.50, amountToSend: -2458.50 });
+  }
+
+  // Test 2: Positive MANDAR_LUCAO
+  // sacado=8000, banca=5000, lucro=1000 (R$)
+  // LIQUIDO = 3000, METADE = 1500
+  // MANDAR_LUCAO = 1500 - 1000 = 500
+  {
+    const dayId = createTestDay();
+    addLaunch(dayId, 1000000, 800000, 500000, 100000);
+    const result = await request(`/bank-operations/days/${dayId}/close`, {
+      method: 'POST',
+      headers: chinoHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(result.status === 200, 'CHINO positivo: fechamento falhou', result);
+    assertChinoClose(result.body.day, { profitTotal: 1000, operatorShare: 1500, amountToSend: 500 });
+  }
+
+  // Test 3: Zero MANDAR_LUCAO (METADE == totalLucro)
+  // sacado=7000, banca=5000, lucro=1000 (R$)
+  // LIQUIDO = 2000, METADE = 1000
+  // MANDAR_LUCAO = 1000 - 1000 = 0
+  {
+    const dayId = createTestDay();
+    addLaunch(dayId, 1000000, 700000, 500000, 100000);
+    const result = await request(`/bank-operations/days/${dayId}/close`, {
+      method: 'POST',
+      headers: chinoHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(result.status === 200, 'CHINO zero: fechamento falhou', result);
+    assertChinoClose(result.body.day, { profitTotal: 1000, operatorShare: 1000, amountToSend: 0 });
+  }
+
   console.log('CorePay smoke test: OK');
 }
 
