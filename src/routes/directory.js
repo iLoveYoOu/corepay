@@ -95,6 +95,7 @@ router.get('/me', auth, (req, res) => {
       u.active,
       u.company_id,
       u.last_login_at,
+      u.last_login_ip,
       c.name AS company_name,
       c.code AS company_code
     FROM users u
@@ -283,6 +284,7 @@ router.get(
             u.active,
             u.company_id,
             u.last_login_at,
+            u.last_login_ip,
             u.created_at,
             c.name AS company_name,
             c.code AS company_code
@@ -300,6 +302,7 @@ router.get(
             u.active,
             u.company_id,
             u.last_login_at,
+            u.last_login_ip,
             u.created_at,
             c.name AS company_name,
             c.code AS company_code

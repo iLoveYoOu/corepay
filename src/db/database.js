@@ -180,6 +180,13 @@ if (!columnExists('users', 'last_login_at')) {
   `);
 }
 
+if (!columnExists('users', 'last_login_ip')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN last_login_ip TEXT
+  `);
+}
+
 if (!columnExists('users', 'updated_at')) {
   db.exec(`
     ALTER TABLE users

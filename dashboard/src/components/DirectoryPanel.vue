@@ -95,7 +95,9 @@
             <th>E-mail</th>
             <th>Perfil</th>
             <th>Status</th>
+            <th>Criado em</th>
             <th>Último acesso</th>
+            <th>IP do último acesso</th>
             <th>Ações</th>
           </tr>
         </thead>
@@ -112,9 +114,11 @@
             <td>
               {{ user.active ? 'Ativo' : 'Bloqueado' }}
             </td>
+            <td>{{ formatDate(user.created_at) }}</td>
             <td>
               {{ formatDate(user.last_login_at) }}
             </td>
+            <td>{{ user.last_login_ip || '-' }}</td>
             <td>
               <button
                 v-if="user.id !== me.id"
@@ -220,6 +224,8 @@
             <th>Responsável</th>
             <th>Ação</th>
             <th>Usuário afetado</th>
+            <th>IP</th>
+            <th>Navegador/dispositivo</th>
           </tr>
         </thead>
 
@@ -233,6 +239,10 @@
             <td>{{ log.actor_name || '-' }}</td>
             <td>{{ log.action }}</td>
             <td>{{ log.target_name || '-' }}</td>
+            <td>{{ log.ip_address || '-' }}</td>
+            <td :title="log.details?.userAgent || ''">
+              {{ formatUserAgent(log.details?.userAgent) }}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -324,6 +334,28 @@ function formatDate(value) {
   return new Date(
     String(value).replace(' ', 'T') + 'Z'
   ).toLocaleString('pt-BR')
+}
+
+function formatUserAgent(value) {
+  const userAgent = String(value || '')
+
+  if (!userAgent) return '-'
+
+  const device = /mobile|android|iphone|ipad/i.test(
+    userAgent
+  )
+    ? 'Celular'
+    : 'Computador'
+
+  const browser =
+    userAgent.match(/Edg\/[\d.]+/i)?.[0] ||
+    userAgent.match(/Firefox\/[\d.]+/i)?.[0] ||
+    userAgent.match(/Chrome\/[\d.]+/i)?.[0] ||
+    userAgent.match(/Version\/[\d.]+.*Safari/i)?.[0]
+
+  return browser
+    ? `${device} — ${browser.split(' ')[0]}`
+    : device
 }
 
 async function loadAll() {

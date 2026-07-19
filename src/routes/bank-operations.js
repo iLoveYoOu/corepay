@@ -251,6 +251,18 @@ db.prepare(`
 
 migrateLegacyBankDayConstraint();
 
+for (const [column, definition] of [
+  ['reopened_at', 'TEXT'],
+  ['reopened_by', 'INTEGER']
+]) {
+  if (!columnExists('bank_operation_days', column)) {
+    db.exec(`
+      ALTER TABLE bank_operation_days
+      ADD COLUMN ${column} ${definition}
+    `);
+  }
+}
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bank_days_user
   ON bank_operation_days(user_id, operation_date);
@@ -1400,7 +1412,8 @@ router.post('/days/:dayId/reopen', auth, (req, res) => {
   }
 
   const activeDay = db.prepare(`
-    SELECT id FROM bank_operation_days
+    SELECT *
+    FROM bank_operation_days
     WHERE user_id = ?
       AND company_id = ?
       AND status = 'open'
@@ -1408,24 +1421,73 @@ router.post('/days/:dayId/reopen', auth, (req, res) => {
   `).get(req.user.id, req.user.companyId, day.id);
 
   if (activeDay) {
-    return res.status(409).json({
-      ok: false,
-      error: 'Já existe uma operação ativa. Feche-a antes de reabrir um dia anterior.'
-    });
+    const activity = db.prepare(`
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM bank_operation_launches
+          WHERE day_id = ?
+        ) AS launches,
+        (
+          SELECT COUNT(*)
+          FROM bank_operation_movements
+          WHERE day_id = ?
+        ) AS movements,
+        (
+          SELECT COUNT(*)
+          FROM bank_operation_accounts
+          WHERE day_id = ?
+            AND (
+              opening_balance_cents != 0
+              OR current_balance_cents != 0
+            )
+        ) AS accounts_with_balance
+    `).get(activeDay.id, activeDay.id, activeDay.id);
+
+    const isEmpty =
+      Number(activeDay.opening_total_cents || 0) === 0 &&
+      Number(activity.launches || 0) === 0 &&
+      Number(activity.movements || 0) === 0 &&
+      Number(activity.accounts_with_balance || 0) === 0;
+
+    if (!isEmpty) {
+      return res.status(409).json({
+        ok: false,
+        error:
+          `O dia ${activeDay.operation_date} possui uma operação ativa. ` +
+          'Feche-o antes de reabrir um dia anterior.'
+      });
+    }
   }
 
-  db.prepare(`
-    UPDATE bank_operation_days
-    SET status = 'open',
-        closing_total_cents = NULL,
-        profit_total_cents = 0,
-        operator_share_cents = 0,
-        capital_replacement_cents = 0,
-        adjustments_cents = 0,
-        amount_to_send_cents = 0,
-        closed_at = NULL
-    WHERE id = ?
-  `).run(day.id);
+  db.transaction(() => {
+    if (activeDay) {
+      db.prepare(`
+        DELETE FROM bank_operation_accounts
+        WHERE day_id = ?
+      `).run(activeDay.id);
+
+      db.prepare(`
+        DELETE FROM bank_operation_days
+        WHERE id = ?
+      `).run(activeDay.id);
+    }
+
+    db.prepare(`
+      UPDATE bank_operation_days
+      SET status = 'open',
+          closing_total_cents = NULL,
+          profit_total_cents = 0,
+          operator_share_cents = 0,
+          capital_replacement_cents = 0,
+          adjustments_cents = 0,
+          amount_to_send_cents = 0,
+          closed_at = NULL,
+          reopened_at = CURRENT_TIMESTAMP,
+          reopened_by = ?
+      WHERE id = ?
+    `).run(req.user.id, day.id);
+  })();
 
   return res.json(serialize(req, ownedDay(req, day.id)));
 });

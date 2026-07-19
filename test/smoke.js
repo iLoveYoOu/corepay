@@ -1043,6 +1043,13 @@ async function run() {
       'Status no histórico não reflete reabertura',
       reopenDays[0]
     );
+
+    db.prepare(`
+      UPDATE bank_operation_days
+      SET status = 'closed',
+          closed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(reopenDayId);
   }
 
   // ── Block reopen when another day is already open ──
@@ -1098,6 +1105,145 @@ async function run() {
 
     // Cleanup active day
     db.prepare(`DELETE FROM bank_operation_days WHERE id = ?`).run(activeDayId);
+  }
+
+  // ── Reopen with another EMPTY active day ──
+  {
+    const emptyActiveDate = '2025-02-10';
+    const emptyUser = adminLogin.body.user;
+
+    // Create a closed day with data
+    const closedForEmptyResult = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents,
+         closing_total_cents, profit_total_cents, operator_share_cents,
+         capital_replacement_cents, adjustments_cents, amount_to_send_cents, closed_at)
+      VALUES (?, ?, ?, 'closed', 50000,
+              45000, 2000, 1000,
+              5000, 0, 1000, CURRENT_TIMESTAMP)
+    `).run(emptyUser.id, emptyUser.companyId, emptyActiveDate);
+    const closedForEmptyId = Number(closedForEmptyResult.lastInsertRowid);
+
+    db.prepare(`
+      INSERT INTO bank_operation_accounts
+        (day_id, name, purpose, opening_balance_cents, current_balance_cents)
+      VALUES (?, 'Closed Empty Bank', 'both', 50000, 45000)
+    `).run(closedForEmptyId);
+
+    // Create a completely empty open day (no launches, movements, balance)
+    const emptyActiveResult = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents)
+      VALUES (?, ?, ?, 'open', 0)
+    `).run(emptyUser.id, emptyUser.companyId, '2099-12-30');
+    const emptyActiveDayId = Number(emptyActiveResult.lastInsertRowid);
+
+    // Add accounts with zero balance
+    db.prepare(`
+      INSERT INTO bank_operation_accounts
+        (day_id, name, purpose, opening_balance_cents, current_balance_cents)
+      VALUES (?, 'Empty Bank', 'both', 0, 0)
+    `).run(emptyActiveDayId);
+
+    // Reopen - should succeed and delete the empty active day
+    const reopenWithEmpty = await request(`/bank-operations/days/${closedForEmptyId}/reopen`, {
+      method: 'POST',
+      headers: adminHeaders
+    });
+    assert(reopenWithEmpty.status === 200, 'Reabertura com dia vazio falhou', reopenWithEmpty);
+    assert(reopenWithEmpty.body.day.status === 'open', 'Dia reaberto não está open', reopenWithEmpty);
+
+    // Verify empty active day was deleted
+    const deletedEmptyDay = db.prepare(`
+      SELECT id FROM bank_operation_days WHERE id = ?
+    `).get(emptyActiveDayId);
+    assert(!deletedEmptyDay, 'Dia vazio não foi removido', { emptyActiveDayId });
+
+    // Verify reopened day preserved data
+    assert(
+      reopenWithEmpty.body.accounts.length === 1 &&
+        reopenWithEmpty.body.accounts[0].name === 'Closed Empty Bank',
+      'Bancos não foram preservados na reabertura com dia vazio',
+      reopenWithEmpty
+    );
+
+    // Cleanup: close the reopened day
+    db.prepare(`
+      UPDATE bank_operation_days
+      SET status = 'closed',
+          closed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(closedForEmptyId);
+  }
+
+  // ── Audit login IP and User-Agent registration ──
+  {
+    const auditUser = await request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: 'audit.test',
+        password: 'AuditTest123!',
+        confirmPassword: 'AuditTest123!'
+      })
+    });
+    assert(auditUser.status === 201, 'Registro para teste de auditoria falhou', auditUser);
+
+    // Login triggers audit recording
+    const auditLogin = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'audit.test',
+        password: 'AuditTest123!'
+      })
+    });
+    assert(auditLogin.status === 200, 'Login para auditoria falhou', auditLogin);
+
+    const auditHeaders = {
+      authorization: `Bearer ${auditLogin.body.token}`
+    };
+
+    // Query audit logs via directory
+    const auditLogs = await request('/directory/audit?limit=50', {
+      headers: adminHeaders
+    });
+    assert(auditLogs.status === 200, 'Consulta de auditoria falhou', auditLogs);
+
+    const loginLogs = auditLogs.body.logs.filter(
+      l => l.action === 'LOGIN_SUCCESS' && l.ip_address
+    );
+    assert(
+      loginLogs.length > 0,
+      'Nenhum LOGIN_SUCCESS com IP encontrado',
+      auditLogs.body.logs
+    );
+
+    // Verify IP is recorded (should be 127.0.0.1 in test)
+    const hasIp = loginLogs.some(l => l.ip_address);
+    assert(hasIp, 'IP não registrado nos logs de login', loginLogs);
+
+    // Verify User-Agent is stored in details
+    const hasUserAgent = loginLogs.some(
+      l => l.details && l.details.userAgent
+    );
+    assert(
+      hasUserAgent,
+      'User-Agent não registrado nos detalhes do login',
+      loginLogs.map(l => ({ id: l.id, details: l.details }))
+    );
+
+    // Verify user has last_login_at and last_login_ip populated
+    const auditMe = await request('/directory/me', { headers: auditHeaders });
+    assert(auditMe.status === 200, 'Consulta /me falhou', auditMe);
+    assert(
+      auditMe.body.user.last_login_at,
+      'last_login_at não foi preenchido',
+      auditMe.body.user
+    );
+    assert(
+      auditMe.body.user.last_login_ip,
+      'last_login_ip não foi preenchido',
+      auditMe.body.user
+    );
   }
 
   // ── Logout cycle tests ──

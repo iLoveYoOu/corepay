@@ -241,9 +241,32 @@ router.post('/login', (req, res) => {
 
   db.prepare(`
     UPDATE users
-    SET last_login_at = CURRENT_TIMESTAMP
+    SET last_login_at = CURRENT_TIMESTAMP,
+        last_login_ip = ?
     WHERE id = ?
-  `).run(user.id);
+  `).run(req.ip || null, user.id);
+
+  db.prepare(`
+    INSERT INTO audit_logs (
+      company_id,
+      actor_user_id,
+      target_user_id,
+      action,
+      details,
+      ip_address
+    )
+    VALUES (?, ?, ?, 'LOGIN_SUCCESS', ?, ?)
+  `).run(
+    user.company_id || null,
+    user.id,
+    user.id,
+    JSON.stringify({
+      userAgent: String(
+        req.get('user-agent') || ''
+      ).slice(0, 500)
+    }),
+    req.ip || null
+  );
 
   const token = createToken(user);
 
