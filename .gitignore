@@ -18,6 +18,10 @@ entrega1-operadores.ps1
 .opencode-bridge-v3/
 .opencode-runtime-config/
 .opencode-runtime-home/
+.opencode-runtime-cache/
+.opencode-runtime-data/
+/.opencode-*
+/tarefa-*.md
 *.ps1
 *.bat
 /CODEX PUSH DEPLOY.cmd
