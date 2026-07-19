@@ -265,6 +265,17 @@ router.post('/login', (req, res) => {
   });
 });
 
+router.post('/logout', authMiddleware, (req, res) => {
+  db.prepare(`
+    UPDATE users
+    SET session_version = session_version + 1,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(req.user.id);
+
+  return res.json({ ok: true });
+});
+
 router.post(
   '/change-password',
   authMiddleware,

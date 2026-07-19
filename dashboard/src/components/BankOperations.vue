@@ -531,6 +531,14 @@
                 >
                   Retomar
                 </button>
+                <button
+                  v-else-if="day.status === 'closed' && state.day?.status !== 'open'"
+                  class="orange compact-button"
+                  :disabled="actionBusy"
+                  @click="reopenDay(day)"
+                >
+                  Reabrir dia
+                </button>
                 <span v-else>—</span>
               </td>
             </tr>
@@ -1205,6 +1213,38 @@ async function resumeDay(day) {
     alert(
       error.response?.data?.error ||
       'Não foi possível abrir este dia.'
+    )
+  } finally {
+    pendingAction.value = ''
+  }
+}
+
+async function reopenDay(day) {
+  if (actionBusy.value) return
+
+  if (!confirm(`Reabrir o dia ${day.operationDate}? Isso vai restaurar a operação com todos os bancos, movimentações e lançamentos anteriores.`)) return
+
+  pendingAction.value = `reopen-${day.id}`
+
+  try {
+    const { data } = await api.post(
+      `/bank-operations/days/${day.id}/reopen`,
+      {},
+      authHeaders()
+    )
+
+    apply(data)
+
+    const historyResponse = await api.get(
+      '/bank-operations/history?limit=30',
+      authHeaders()
+    )
+
+    state.history = historyResponse.data.days || []
+  } catch (error) {
+    alert(
+      error.response?.data?.error ||
+      'Não foi possível reabrir o dia.'
     )
   } finally {
     pendingAction.value = ''

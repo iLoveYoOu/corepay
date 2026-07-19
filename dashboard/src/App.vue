@@ -32,7 +32,7 @@
       <p class="error">{{ error }}</p>
     </form>
 
-    <form v-if="!token && showRegister" class="login" @submit.prevent="register">
+    <form v-else-if="!token && showRegister" class="login" @submit.prevent="register">
       <img src="/logo.jpeg" class="login-brand" alt="CorePay" />
       <h1>Criar conta</h1>
       <p class="login-copy">Cadastre-se para começar a operar.</p>
@@ -316,7 +316,12 @@ function cancelPasswordChange() {
   newPasswordConfirmation.value = ''
 }
 
-function logout() {
+async function logout() {
+  try {
+    await api.post('/auth/logout', {}, authHeaders())
+  } catch {
+    // Ignore logout request failures — always clear local state
+  }
   clearSession()
   error.value = ''
 }

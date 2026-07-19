@@ -955,6 +955,245 @@ async function run() {
     );
   }
 
+  // ── Reopen closed day tests ──
+  {
+    // Create a closed day
+    const reopenDate = '2025-02-01';
+    const reopenUser = adminLogin.body.user;
+    const reopenResult = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents)
+      VALUES (?, ?, ?, 'open', ?)
+    `).run(reopenUser.id, reopenUser.companyId, reopenDate, 500000);
+    const reopenDayId = Number(reopenResult.lastInsertRowid);
+
+    const reopenAccountResult = db.prepare(`
+      INSERT INTO bank_operation_accounts
+        (day_id, name, purpose, opening_balance_cents, current_balance_cents)
+      VALUES (?, 'Reopen Bank', 'both', 500000, 450000)
+    `).run(reopenDayId);
+    const reopenAccountId = Number(reopenAccountResult.lastInsertRowid);
+
+    db.prepare(`
+      INSERT INTO bank_operation_launches
+        (day_id, user_id, casa, deposito_cents, banca_cents,
+         lucro_blogueira_cents, lucao_cents, saque_cents)
+      VALUES (?, ?, 'Reopen Casa', 100000, 80000, 20000, 0, 50000)
+    `).run(reopenDayId, reopenUser.id);
+
+    db.prepare(`
+      INSERT INTO bank_operation_movements
+        (day_id, account_id, user_id, type, amount_cents, note)
+      VALUES (?, ?, ?, 'entry', 50000, 'Reopen entry')
+    `).run(reopenDayId, reopenAccountId, reopenUser.id);
+
+    // Close the day
+    const closeReopen = await request(`/bank-operations/days/${reopenDayId}/close`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(closeReopen.status === 200, 'Fechamento para reopen falhou', closeReopen);
+    assert(closeReopen.body.day.status === 'closed', 'Dia não ficou fechado', closeReopen);
+
+    // Reopen the closed day
+    const reopened = await request(`/bank-operations/days/${reopenDayId}/reopen`, {
+      method: 'POST',
+      headers: adminHeaders
+    });
+    assert(reopened.status === 200, 'Reabertura falhou', reopened);
+    assert(reopened.body.day.status === 'open', 'Dia reaberto não está open', reopened);
+    assert(reopened.body.day.closingTotal === null, 'closingTotal não foi limpo', reopened);
+    assert(
+      reopened.body.launches.length === 1 &&
+        reopened.body.launches[0].casa === 'Reopen Casa',
+      'Lançamentos não foram preservados na reabertura',
+      reopened
+    );
+    assert(
+      reopened.body.movements.length === 1 &&
+        reopened.body.movements[0].note === 'Reopen entry',
+      'Movimentações não foram preservadas na reabertura',
+      reopened
+    );
+    assert(
+      reopened.body.accounts.length === 1 &&
+        reopened.body.accounts[0].name === 'Reopen Bank',
+      'Bancos não foram preservados na reabertura',
+      reopened
+    );
+    assert(
+      Number(reopened.body.accounts[0].currentBalance) === 450000 / 100,
+      'Saldo dos bancos não foi preservado na reabertura',
+      reopened
+    );
+
+    // Verify no duplication in history after reopen
+    const reopenHistory = await request('/bank-operations/history?limit=30', {
+      headers: adminHeaders
+    });
+    const reopenDays = reopenHistory.body.days.filter(d => d.id === reopenDayId);
+    assert(
+      reopenDays.length === 1,
+      'Dia reaberto aparece duplicado no histórico',
+      reopenDays
+    );
+    assert(
+      reopenDays[0].status === 'open',
+      'Status no histórico não reflete reabertura',
+      reopenDays[0]
+    );
+  }
+
+  // ── Block reopen when another day is already open ──
+  {
+    const blockDate = '2025-02-02';
+    const blockUser = adminLogin.body.user;
+
+    // Create a closed day
+    const closedResult = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents,
+         closing_total_cents, profit_total_cents, operator_share_cents,
+         capital_replacement_cents, adjustments_cents, amount_to_send_cents, closed_at)
+      VALUES (?, ?, ?, 'closed', 100000,
+              90000, 5000, 2500,
+              10000, 0, 2500, CURRENT_TIMESTAMP)
+    `).run(blockUser.id, blockUser.companyId, blockDate);
+    const closedDayId = Number(closedResult.lastInsertRowid);
+
+    // Create an active open day (today)
+    const activeResult = db.prepare(`
+      INSERT INTO bank_operation_days
+        (user_id, company_id, operation_date, status, opening_total_cents)
+      VALUES (?, ?, ?, 'open', 200000)
+    `).run(blockUser.id, blockUser.companyId, '2099-12-31');
+    const activeDayId = Number(activeResult.lastInsertRowid);
+
+    // Try to reopen - should be blocked
+    const blockedReopen = await request(`/bank-operations/days/${closedDayId}/reopen`, {
+      method: 'POST',
+      headers: adminHeaders
+    });
+    assert(
+      blockedReopen.status === 409,
+      'Reabertura com dia ativo não foi bloqueada',
+      blockedReopen
+    );
+    assert(
+      blockedReopen.body.error && blockedReopen.body.error.includes('operação ativa'),
+      'Mensagem de bloqueio não menciona operação ativa',
+      blockedReopen
+    );
+
+    // Verify closed day was NOT modified
+    const stillClosed = db.prepare(`
+      SELECT status FROM bank_operation_days WHERE id = ?
+    `).get(closedDayId);
+    assert(
+      stillClosed.status === 'closed',
+      'Dia fechado foi modificado indevidamente durante bloqueio',
+      stillClosed
+    );
+
+    // Cleanup active day
+    db.prepare(`DELETE FROM bank_operation_days WHERE id = ?`).run(activeDayId);
+  }
+
+  // ── Logout cycle tests ──
+  {
+    // Register a user dedicated to logout testing
+    const logoutUser = await request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: 'logout.test',
+        password: 'LogoutTest123!',
+        confirmPassword: 'LogoutTest123!'
+      })
+    });
+    assert(logoutUser.status === 201, 'Registro para teste de logout falhou', logoutUser);
+
+    // First login cycle
+    const login1 = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'logout.test',
+        password: 'LogoutTest123!'
+      })
+    });
+    assert(login1.status === 200, 'Primeiro login falhou', login1);
+    assert(login1.body.token, 'Primeiro login sem token', login1);
+
+    const logoutHeaders1 = {
+      authorization: `Bearer ${login1.body.token}`
+    };
+
+    // Verify token works
+    const me1 = await request('/wallet/me', {
+      headers: logoutHeaders1
+    });
+    assert(me1.status === 200, 'Token do primeiro login inválido', me1);
+
+    // Logout
+    const logout1 = await request('/auth/logout', {
+      method: 'POST',
+      headers: logoutHeaders1
+    });
+    assert(logout1.status === 200, 'Primeiro logout falhou', logout1);
+    assert(logout1.body.ok === true, 'Primeiro logout sem ok', logout1);
+
+    // Verify token is invalidated after logout
+    const meAfterLogout1 = await request('/wallet/me', {
+      headers: logoutHeaders1
+    });
+    assert(meAfterLogout1.status === 401, 'Token ainda válido após primeiro logout', meAfterLogout1);
+
+    // Second login cycle
+    const login2 = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'logout.test',
+        password: 'LogoutTest123!'
+      })
+    });
+    assert(login2.status === 200, 'Segundo login falhou', login2);
+    assert(login2.body.token, 'Segundo login sem token', login2);
+
+    const logoutHeaders2 = {
+      authorization: `Bearer ${login2.body.token}`
+    };
+
+    // Verify new token works
+    const me2 = await request('/wallet/me', {
+      headers: logoutHeaders2
+    });
+    assert(me2.status === 200, 'Token do segundo login inválido', me2);
+
+    // Logout again
+    const logout2 = await request('/auth/logout', {
+      method: 'POST',
+      headers: logoutHeaders2
+    });
+    assert(logout2.status === 200, 'Segundo logout falhou', logout2);
+    assert(logout2.body.ok === true, 'Segundo logout sem ok', logout2);
+
+    // Verify second token is also invalidated
+    const meAfterLogout2 = await request('/wallet/me', {
+      headers: logoutHeaders2
+    });
+    assert(meAfterLogout2.status === 401, 'Token ainda válido após segundo logout', meAfterLogout2);
+
+    // Verify user can still log in a third time (resilience)
+    const login3 = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'logout.test',
+        password: 'LogoutTest123!'
+      })
+    });
+    assert(login3.status === 200, 'Terceiro login após dois ciclos falhou', login3);
+  }
+
   console.log('CorePay smoke test: OK');
 }
 

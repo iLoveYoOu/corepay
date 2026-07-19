@@ -1389,6 +1389,47 @@ router.post('/days/:dayId/close', auth, (req, res) => {
   );
 });
 
+router.post('/days/:dayId/reopen', auth, (req, res) => {
+  const day = ownedDay(req, req.params.dayId);
+
+  if (!day || day.status !== 'closed') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Dia fechado não encontrado.'
+    });
+  }
+
+  const activeDay = db.prepare(`
+    SELECT id FROM bank_operation_days
+    WHERE user_id = ?
+      AND company_id = ?
+      AND status = 'open'
+      AND id != ?
+  `).get(req.user.id, req.user.companyId, day.id);
+
+  if (activeDay) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Já existe uma operação ativa. Feche-a antes de reabrir um dia anterior.'
+    });
+  }
+
+  db.prepare(`
+    UPDATE bank_operation_days
+    SET status = 'open',
+        closing_total_cents = NULL,
+        profit_total_cents = 0,
+        operator_share_cents = 0,
+        capital_replacement_cents = 0,
+        adjustments_cents = 0,
+        amount_to_send_cents = 0,
+        closed_at = NULL
+    WHERE id = ?
+  `).run(day.id);
+
+  return res.json(serialize(req, ownedDay(req, day.id)));
+});
+
 router.post('/days/:dayId/reset', auth, (req, res) => {
   const day = ownedDay(req, req.params.dayId);
 
