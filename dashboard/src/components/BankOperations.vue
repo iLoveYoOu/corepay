@@ -1159,7 +1159,7 @@ async function closeDay() {
 async function resetDay() {
   if (actionBusy.value) return
 
-  if (!confirm('Tem certeza? Isso vai apagar todos os lançamentos e movimentações do dia.')) return
+  if (!confirm('Tem certeza? Isso vai apagar todos os lançamentos e movimentações do dia e todo o histórico de fechamentos anteriores.')) return
 
   pendingAction.value = 'reset'
 
@@ -1171,6 +1171,13 @@ async function resetDay() {
     )
 
     apply(data)
+
+    const historyResponse = await api.get(
+      '/bank-operations/history?limit=30',
+      authHeaders()
+    )
+
+    state.history = historyResponse.data.days || []
   } catch (error) {
     alert(
       error.response?.data?.error ||

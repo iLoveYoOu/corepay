@@ -19,5 +19,7 @@ entrega1-operadores.ps1
 .opencode-runtime-home/
 *.ps1
 *.bat
+/CODEX PUSH DEPLOY.cmd
+/CHINO.xlsx
 info_manus.txt
 meu-agente-cline/

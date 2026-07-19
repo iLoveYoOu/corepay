@@ -1399,7 +1399,37 @@ router.post('/days/:dayId/reset', auth, (req, res) => {
     });
   }
 
+  const closedDays = db.prepare(`
+    SELECT id FROM bank_operation_days
+    WHERE user_id = ?
+      AND company_id = ?
+      AND status = 'closed'
+      AND id != ?
+  `).all(req.user.id, req.user.companyId, day.id);
+
   db.transaction(() => {
+    for (const closed of closedDays) {
+      db.prepare(`
+        DELETE FROM bank_operation_launches
+        WHERE day_id = ?
+      `).run(closed.id);
+
+      db.prepare(`
+        DELETE FROM bank_operation_movements
+        WHERE day_id = ?
+      `).run(closed.id);
+
+      db.prepare(`
+        DELETE FROM bank_operation_accounts
+        WHERE day_id = ?
+      `).run(closed.id);
+
+      db.prepare(`
+        DELETE FROM bank_operation_days
+        WHERE id = ?
+      `).run(closed.id);
+    }
+
     db.prepare(`
       DELETE FROM bank_operation_launches
       WHERE day_id = ?

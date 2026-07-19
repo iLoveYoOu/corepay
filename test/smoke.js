@@ -802,6 +802,57 @@ async function run() {
     assertChinoClose(result.body.day, { profitTotal: 1000, operatorShare: 1000, amountToSend: 0 });
   }
 
+  // ── Reset day with previous closings ──
+  {
+    const resetDayId = openedAfterCompanyMove.body.day.id;
+
+    db.prepare(`
+      INSERT INTO bank_operation_launches
+        (day_id, user_id, casa, deposito_cents, banca_cents,
+         lucro_blogueira_cents, lucao_cents, saque_cents)
+      VALUES (?, ?, 'Reset Test', 100000, 50000, 20000, 0, 50000)
+    `).run(resetDayId, chinoUserId);
+
+    const beforeResetHistory = await request(
+      '/bank-operations/history?limit=30',
+      { headers: chinoHeaders }
+    );
+    assert(
+      beforeResetHistory.status === 200 &&
+        beforeResetHistory.body.days.length > 0,
+      'Deveria haver histórico antes do reset',
+      beforeResetHistory
+    );
+
+    const resetResult = await request(
+      `/bank-operations/days/${resetDayId}/reset`,
+      {
+        method: 'POST',
+        headers: chinoHeaders,
+        body: JSON.stringify({})
+      }
+    );
+    assert(resetResult.status === 200, 'Reset do dia falhou', resetResult);
+    assert(
+      resetResult.body.launches.length === 0,
+      'Lançamentos do dia aberto não foram limpos',
+      resetResult
+    );
+
+    const afterResetHistory = await request(
+      '/bank-operations/history?limit=30',
+      { headers: chinoHeaders }
+    );
+    assert(
+      afterResetHistory.status === 200 &&
+        afterResetHistory.body.days.length === 1 &&
+        afterResetHistory.body.days[0].id === resetDayId &&
+        afterResetHistory.body.days[0].status === 'open',
+      'Histórico deveria manter somente o dia atual aberto após o reset',
+      afterResetHistory
+    );
+  }
+
   console.log('CorePay smoke test: OK');
 }
 
