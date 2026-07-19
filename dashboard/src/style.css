@@ -164,6 +164,22 @@ p {
   font-size: 14px;
 }
 
+.login-toggle {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.login-toggle a {
+  color: var(--blue);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.login-toggle a:hover {
+  text-decoration: underline;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

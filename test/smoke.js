@@ -346,6 +346,108 @@ async function run() {
     authorization: `Bearer ${adminLogin.body.token}`
   };
 
+  // ── Public registration tests ──
+  const reg = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'usuario.publico',
+      password: 'minhasenha',
+      confirmPassword: 'minhasenha'
+    })
+  });
+  assert(reg.status === 201, 'Registro público falhou', reg);
+
+  const regDup = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'usuario.publico',
+      password: 'outrasenha',
+      confirmPassword: 'outrasenha'
+    })
+  });
+  assert(
+    regDup.status === 400 &&
+      regDup.body.error.includes('já cadastrado'),
+    'Duplicidade não rejeitada',
+    regDup
+  );
+
+  const regEmpty = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: '',
+      password: 'x',
+      confirmPassword: 'x'
+    })
+  });
+  assert(
+    regEmpty.status === 400,
+    'Usuário vazio não rejeitado',
+    regEmpty
+  );
+
+  const regMismatch = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'outro.usuario',
+      password: 'senha123',
+      confirmPassword: 'senha456'
+    })
+  });
+  assert(
+    regMismatch.status === 400,
+    'Confirmação divergente não rejeitada',
+    regMismatch
+  );
+
+  const regEmptyPass = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'mais.um',
+      password: '',
+      confirmPassword: ''
+    })
+  });
+  assert(
+    regEmptyPass.status === 400,
+    'Senha vazia não rejeitada',
+    regEmptyPass
+  );
+
+  // Login por username
+  const userLogin = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: 'usuario.publico',
+      password: 'minhasenha'
+    })
+  });
+  assert(userLogin.status === 200, 'Login por username falhou', userLogin);
+
+  // Verifica papel mínimo (operator)
+  assert(
+    userLogin.body.user.role === 'operator',
+    'Registro público não recebeu papel operator',
+    userLogin.body.user
+  );
+
+  // Verifica empresa padrão
+  assert(
+    userLogin.body.user.companyCode === 'SP',
+    'Registro público não vinculado à empresa SP',
+    userLogin.body.user
+  );
+
+  // Login antigo por e-mail continua funcionando
+  const oldLogin = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: process.env.ADMIN_EMAIL,
+      password: process.env.ADMIN_PASSWORD
+    })
+  });
+  assert(oldLogin.status === 200, 'Login por e-mail legado quebrou', oldLogin);
+
   const operator = await request('/users', {
     method: 'POST',
     headers: adminHeaders,

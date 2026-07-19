@@ -187,6 +187,24 @@ if (!columnExists('users', 'updated_at')) {
   `);
 }
 
+if (!columnExists('users', 'username')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN username TEXT
+  `);
+}
+
+db.prepare(`
+  UPDATE users
+  SET username = email
+  WHERE username IS NULL
+`).run();
+
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+  ON users(username)
+`);
+
 function hasLegacyTreasuryUniqueConstraints() {
   return db
     .prepare(`PRAGMA index_list('treasury_days')`)

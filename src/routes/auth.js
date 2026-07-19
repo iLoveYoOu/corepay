@@ -94,13 +94,102 @@ function createToken(user) {
   );
 }
 
+router.post('/register', (req, res) => {
+  const username = String(req.body.username || '')
+    .trim()
+    .toLowerCase();
+  const password = String(req.body.password || '');
+  const confirmPassword = String(req.body.confirmPassword || '');
+
+  if (!username) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Nome de usuário é obrigatório.'
+    });
+  }
+
+  if (!password) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Senha é obrigatória.'
+    });
+  }
+
+  if (password !== confirmPassword) {
+    return res.status(400).json({
+      ok: false,
+      error: 'As senhas não conferem.'
+    });
+  }
+
+  const existing = db.prepare(`
+    SELECT id FROM users WHERE username = ?
+  `).get(username);
+
+  if (existing) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Nome de usuário já cadastrado.'
+    });
+  }
+
+  const company = db.prepare(`
+    SELECT id FROM companies WHERE code = 'SP'
+  `).get();
+
+  if (!company) {
+    return res.status(500).json({
+      ok: false,
+      error: 'Empresa padrão não encontrada.'
+    });
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const placeholderEmail = `${username}@l`;
+
+  try {
+    const result = db.transaction(() => {
+      const userResult = db.prepare(`
+        INSERT INTO users (
+          name, email, username, password_hash,
+          role, active, company_id, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'operator', 1, ?, CURRENT_TIMESTAMP)
+      `).run(username, placeholderEmail, username, passwordHash, company.id);
+
+      const userId = Number(userResult.lastInsertRowid);
+
+      db.prepare(`
+        INSERT INTO wallets (user_id, balance_cents)
+        VALUES (?, 0)
+      `).run(userId);
+
+      return userId;
+    })();
+
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Nome de usuário já cadastrado.'
+      });
+    }
+
+    return res.status(400).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
 router.post('/login', (req, res) => {
-  const email = String(req.body.email || '')
+  const login = String(req.body.email || req.body.login || '')
     .trim()
     .toLowerCase();
 
   const password = String(req.body.password || '');
-  const key = attemptKey(req, email);
+  const key = attemptKey(req, login);
   const attempts = currentAttempts(key);
 
   if (attempts && attempts.count >= LOGIN_MAX_ATTEMPTS) {
@@ -119,9 +208,9 @@ router.post('/login', (req, res) => {
     FROM users u
     LEFT JOIN companies c
       ON c.id = u.company_id
-    WHERE u.email = ?
+    WHERE (u.email = ? OR u.username = ?)
       AND u.active = 1
-  `).get(email);
+  `).get(login, login);
 
   if (
     !user ||

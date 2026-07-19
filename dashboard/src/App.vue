@@ -1,14 +1,14 @@
 ﻿<template>
   <div class="page">
-    <form v-if="!token" class="login" @submit.prevent="login">
+    <form v-if="!token && !showRegister" class="login" @submit.prevent="login">
       <img src="/logo.jpeg" class="login-brand" alt="CorePay" />
       <h1>Bem-vindo</h1>
       <p class="login-copy">Entre para acessar sua operação.</p>
       <label>
-        E-mail
+        Usuário ou E-mail
         <input
           v-model="email"
-          type="email"
+          type="text"
           autocomplete="username"
           placeholder="seu@email.com"
         />
@@ -25,6 +25,51 @@
       <button type="submit" :disabled="authLoading">
         {{ authLoading ? 'Entrando...' : 'Entrar' }}
       </button>
+      <p class="login-toggle">
+        Ainda não tem conta?
+        <a href="#" @click.prevent="showRegister = true">Criar usuário</a>
+      </p>
+      <p class="error">{{ error }}</p>
+    </form>
+
+    <form v-if="!token && showRegister" class="login" @submit.prevent="register">
+      <img src="/logo.jpeg" class="login-brand" alt="CorePay" />
+      <h1>Criar conta</h1>
+      <p class="login-copy">Cadastre-se para começar a operar.</p>
+      <label>
+        Nome de usuário
+        <input
+          v-model="registerUsername"
+          type="text"
+          autocomplete="username"
+          placeholder="meu.usuario"
+        />
+      </label>
+      <label>
+        Senha
+        <input
+          v-model="registerPassword"
+          type="password"
+          autocomplete="new-password"
+          placeholder="Sua senha"
+        />
+      </label>
+      <label>
+        Confirmar senha
+        <input
+          v-model="registerConfirm"
+          type="password"
+          autocomplete="new-password"
+          placeholder="Confirme a senha"
+        />
+      </label>
+      <button type="submit" :disabled="authLoading">
+        {{ authLoading ? 'Cadastrando...' : 'Criar conta' }}
+      </button>
+      <p class="login-toggle">
+        Já tem conta?
+        <a href="#" @click.prevent="showRegister = false">Entrar</a>
+      </p>
       <p class="error">{{ error }}</p>
     </form>
 
@@ -129,6 +174,10 @@ const password = ref('')
 const token = ref(localStorage.getItem('token'))
 const error = ref('')
 const authLoading = ref(false)
+const showRegister = ref(false)
+const registerUsername = ref('')
+const registerPassword = ref('')
+const registerConfirm = ref('')
 const tab = ref('banking')
 const showPasswordChange = ref(false)
 const currentPassword = ref('')
@@ -165,6 +214,34 @@ async function login() {
     error.value =
       err.response?.data?.error ||
       'Não foi possível entrar.'
+  } finally {
+    authLoading.value = false
+  }
+}
+
+async function register() {
+  if (authLoading.value) return
+
+  error.value = ''
+  authLoading.value = true
+
+  try {
+    await api.post('/auth/register', {
+      username: registerUsername.value,
+      password: registerPassword.value,
+      confirmPassword: registerConfirm.value
+    })
+
+    showRegister.value = false
+    email.value = registerUsername.value
+    registerUsername.value = ''
+    registerPassword.value = ''
+    registerConfirm.value = ''
+    error.value = 'Conta criada! Agora faça o login.'
+  } catch (err) {
+    error.value =
+      err.response?.data?.error ||
+      'Não foi possível cadastrar.'
   } finally {
     authLoading.value = false
   }
@@ -221,6 +298,10 @@ function clearSession(message = '') {
   wallet.value = {}
   tab.value = 'banking'
   password.value = ''
+  showRegister.value = false
+  registerUsername.value = ''
+  registerPassword.value = ''
+  registerConfirm.value = ''
   cancelPasswordChange()
 
   if (message) {

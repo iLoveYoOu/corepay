@@ -15,6 +15,7 @@ entrega1-operadores.ps1
 # Manus Bridge Files
 .opencode-bridge/
 .opencode-bridge-v2/
+.opencode-bridge-v3/
 .opencode-runtime-config/
 .opencode-runtime-home/
 *.ps1
