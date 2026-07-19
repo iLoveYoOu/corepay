@@ -219,6 +219,20 @@ for (const [column, definition] of [
   }
 }
 
+if (!columnExists('bank_operation_launches', 'movement_id')) {
+  db.exec(`
+    ALTER TABLE bank_operation_launches
+    ADD COLUMN movement_id INTEGER
+  `);
+}
+
+if (!columnExists('bank_operation_launches', 'account_id')) {
+  db.exec(`
+    ALTER TABLE bank_operation_launches
+    ADD COLUMN account_id INTEGER
+  `);
+}
+
 db.exec(`
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_movement_idempotency
 ON bank_operation_movements(day_id, idempotency_key)
@@ -416,7 +430,9 @@ function serialize(req, day) {
       banca: money(l.banca_cents),
       lucroBlogueira: money(l.lucro_blogueira_cents),
       lucao: money(l.lucao_cents),
-      saque: money(l.saque_cents)
+      saque: money(l.saque_cents),
+      movementId: l.movement_id,
+      accountId: l.account_id
     })),
     totalLucao: money(totalLucaoCents),
     totals: {
@@ -933,6 +949,7 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
     const casa = String(req.body.casa || '').trim();
     const depositoCents = toCents(req.body.deposito);
     const saqueCents = toCents(req.body.saque || 0) || 0;
+    const accountId = req.body.accountId ? Number(req.body.accountId) : null;
 
     if (!casa || !depositoCents || depositoCents <= 0) {
       return res.status(400).json({
@@ -941,41 +958,83 @@ router.post('/days/:dayId/launches', auth, async (req, res) => {
       });
     }
 
-    const depositoValue = depositoCents / 100;
-    let bancaCents, lucroCents, lucaoCents;
-
-    if ([81, 121, 241].includes(depositoValue)) {
-      bancaCents = 0;
-      lucroCents = saqueCents;
-      lucaoCents = Math.round(saqueCents / 2);
-    } else {
-      const lucroValue = calcularLucro(depositoValue);
-      lucroCents = Math.round(lucroValue * 100);
-      bancaCents = depositoCents - lucroCents;
-      if (saqueCents <= bancaCents) {
-        lucaoCents = (bancaCents - saqueCents) + lucroCents;
-      } else {
-        lucaoCents = Math.round((lucroCents / 2) + ((saqueCents - bancaCents) / 2));
-      }
+    if (!accountId) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Selecione o banco de origem do depósito.'
+      });
     }
 
-    db.prepare(`
-      INSERT INTO bank_operation_launches (
-        day_id, user_id, casa, deposito_cents,
-        banca_cents, lucro_blogueira_cents,
-        lucao_cents, saque_cents
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      day.id,
-      req.user.id,
-      casa,
-      depositoCents,
-      bancaCents,
-      lucroCents,
-      lucaoCents,
-      saqueCents
-    );
+    const account = db.prepare(`
+      SELECT * FROM bank_operation_accounts
+      WHERE id = ? AND day_id = ? AND active = 1
+    `).get(accountId, day.id);
+
+    if (!account) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Banco selecionado não encontrado.'
+      });
+    }
+
+    const depositoValue = depositoCents / 100;
+    const lucroValue = calcularLucro(depositoValue);
+    const lucroCents = Math.round(lucroValue * 100);
+    const bancaCents = depositoCents - lucroCents;
+    const netProfit = saqueCents - depositoCents;
+    const lucaoCents = netProfit > 0 ? Math.round(netProfit / 2) : 0;
+
+    db.transaction(() => {
+      const freshAccount = db.prepare(`
+        SELECT * FROM bank_operation_accounts
+        WHERE id = ? AND day_id = ? AND active = 1
+      `).get(account.id, day.id);
+
+      if (!freshAccount || freshAccount.current_balance_cents < depositoCents) {
+        throw new Error('Saldo insuficiente no banco selecionado.');
+      }
+
+      const movementResult = db.prepare(`
+        INSERT INTO bank_operation_movements (
+          day_id, account_id, user_id, type,
+          amount_cents, note, idempotency_key
+        )
+        VALUES (?, ?, ?, 'exit', ?, ?, ?)
+      `).run(
+        day.id, account.id, req.user.id,
+        depositoCents,
+        `Depósito: ${casa}`,
+        `launch_${casa}_${Date.now()}`
+      );
+
+      const movementId = Number(movementResult.lastInsertRowid);
+
+      db.prepare(`
+        UPDATE bank_operation_accounts
+        SET current_balance_cents = current_balance_cents - ?
+        WHERE id = ?
+      `).run(depositoCents, account.id);
+
+      db.prepare(`
+        INSERT INTO bank_operation_launches (
+          day_id, user_id, casa, deposito_cents,
+          banca_cents, lucro_blogueira_cents,
+          lucao_cents, saque_cents, movement_id, account_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        day.id,
+        req.user.id,
+        casa,
+        depositoCents,
+        bancaCents,
+        lucroCents,
+        lucaoCents,
+        saqueCents,
+        movementId,
+        account.id
+      );
+    })();
 
     sheets.salvarLancamento({
       casa,
@@ -1029,6 +1088,7 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
   const saqueCents = req.body.saque !== undefined
     ? (toCents(req.body.saque) || 0)
     : launch.saque_cents;
+  const accountId = req.body.accountId ? Number(req.body.accountId) : null;
 
   if (!casa || !depositoCents || depositoCents <= 0) {
     return res.status(400).json({
@@ -1037,34 +1097,118 @@ router.put('/days/:dayId/launches/:launchId', auth, (req, res) => {
     });
   }
 
-  const depositoValue = depositoCents / 100;
-  let bancaCents, lucroCents, lucaoCents;
-
-  if ([81, 121, 241].includes(depositoValue)) {
-    bancaCents = 0;
-    lucroCents = saqueCents;
-    lucaoCents = Math.round(saqueCents / 2);
-  } else {
-    const lucroValue = calcularLucro(depositoValue);
-    lucroCents = Math.round(lucroValue * 100);
-    bancaCents = depositoCents - lucroCents;
-    if (saqueCents <= bancaCents) {
-      lucaoCents = (bancaCents - saqueCents) + lucroCents;
-    } else {
-      lucaoCents = Math.round((lucroCents / 2) + ((saqueCents - bancaCents) / 2));
-    }
+  if (!accountId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Selecione o banco de origem do depósito.'
+    });
   }
 
-  db.prepare(`
-    UPDATE bank_operation_launches
-    SET casa = ?,
-        deposito_cents = ?,
-        banca_cents = ?,
-        lucro_blogueira_cents = ?,
-        lucao_cents = ?,
-        saque_cents = ?
-    WHERE id = ? AND day_id = ?
-  `).run(casa, depositoCents, bancaCents, lucroCents, lucaoCents, saqueCents, launch.id, day.id);
+  const account = db.prepare(`
+    SELECT * FROM bank_operation_accounts
+    WHERE id = ? AND day_id = ? AND active = 1
+  `).get(accountId, day.id);
+
+  if (!account) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Banco selecionado não encontrado.'
+    });
+  }
+
+  const depositoValue = depositoCents / 100;
+  const lucroValue = calcularLucro(depositoValue);
+  const lucroCents = Math.round(lucroValue * 100);
+  const bancaCents = depositoCents - lucroCents;
+  const netProfit = saqueCents - depositoCents;
+  const lucaoCents = netProfit > 0 ? Math.round(netProfit / 2) : 0;
+
+  db.transaction(() => {
+    if (launch.movement_id) {
+      const oldMovement = db.prepare(`
+        SELECT * FROM bank_operation_movements
+        WHERE id = ? AND day_id = ? AND reversed = 0
+      `).get(launch.movement_id, day.id);
+
+      if (oldMovement) {
+        const oldAccount = db.prepare(`
+          SELECT * FROM bank_operation_accounts
+          WHERE id = ? AND day_id = ? AND active = 1
+        `).get(oldMovement.account_id, day.id);
+
+        if (!oldAccount) {
+          throw new Error('Banco da movimentação original não encontrado.');
+        }
+
+        const reverseDelta = oldMovement.type === 'entry'
+          ? -oldMovement.amount_cents
+          : oldMovement.amount_cents;
+        const nextBalance = oldAccount.current_balance_cents + reverseDelta;
+
+        if (nextBalance < 0) {
+          throw new Error('O estorno deixaria o saldo do banco negativo.');
+        }
+
+        db.prepare(`
+          UPDATE bank_operation_accounts
+          SET current_balance_cents = ?
+          WHERE id = ?
+        `).run(nextBalance, oldAccount.id);
+
+        db.prepare(`
+          UPDATE bank_operation_movements
+          SET reversed = 1,
+              reversed_at = CURRENT_TIMESTAMP,
+              reversal_reason = ?,
+              reversed_by = ?
+          WHERE id = ? AND reversed = 0
+        `).run('Edição do lançamento', req.user.id, oldMovement.id);
+      }
+    }
+
+    const freshAccount = db.prepare(`
+      SELECT * FROM bank_operation_accounts
+      WHERE id = ? AND day_id = ? AND active = 1
+    `).get(account.id, day.id);
+
+    if (!freshAccount || freshAccount.current_balance_cents < depositoCents) {
+      throw new Error('Saldo insuficiente no banco selecionado.');
+    }
+
+    const movementResult = db.prepare(`
+      INSERT INTO bank_operation_movements (
+        day_id, account_id, user_id, type,
+        amount_cents, note, idempotency_key
+      )
+      VALUES (?, ?, ?, 'exit', ?, ?, ?)
+    `).run(
+      day.id, account.id, req.user.id,
+      depositoCents,
+      `Depósito: ${casa}`,
+      `launch_${casa}_${Date.now()}`
+    );
+
+    const movementId = Number(movementResult.lastInsertRowid);
+
+    db.prepare(`
+      UPDATE bank_operation_accounts
+      SET current_balance_cents = current_balance_cents - ?
+      WHERE id = ?
+    `).run(depositoCents, account.id);
+
+    db.prepare(`
+      UPDATE bank_operation_launches
+      SET casa = ?,
+          deposito_cents = ?,
+          banca_cents = ?,
+          lucro_blogueira_cents = ?,
+          lucao_cents = ?,
+          saque_cents = ?,
+          movement_id = ?,
+          account_id = ?
+      WHERE id = ? AND day_id = ?
+    `).run(casa, depositoCents, bancaCents, lucroCents, lucaoCents, saqueCents, movementId, account.id, launch.id, day.id);
+  })();
 
   return res.json(
     serialize(req, ownedDay(req, day.id))
@@ -1093,10 +1237,52 @@ router.delete('/days/:dayId/launches/:launchId', auth, (req, res) => {
     });
   }
 
-  db.prepare(`
-    DELETE FROM bank_operation_launches
-    WHERE id = ? AND day_id = ?
-  `).run(launch.id, day.id);
+  db.transaction(() => {
+    if (launch.movement_id) {
+      const movement = db.prepare(`
+        SELECT * FROM bank_operation_movements
+        WHERE id = ? AND day_id = ? AND reversed = 0
+      `).get(launch.movement_id, day.id);
+
+      if (movement) {
+        const account = db.prepare(`
+          SELECT * FROM bank_operation_accounts
+          WHERE id = ? AND day_id = ? AND active = 1
+        `).get(movement.account_id, day.id);
+
+        if (account) {
+          const delta = movement.type === 'entry'
+            ? -movement.amount_cents
+            : movement.amount_cents;
+          const nextBalance = account.current_balance_cents + delta;
+
+          if (nextBalance < 0) {
+            throw new Error('O estorno deixaria o saldo do banco negativo.');
+          }
+
+          db.prepare(`
+            UPDATE bank_operation_accounts
+            SET current_balance_cents = ?
+            WHERE id = ?
+          `).run(nextBalance, account.id);
+
+          db.prepare(`
+            UPDATE bank_operation_movements
+            SET reversed = 1,
+                reversed_at = CURRENT_TIMESTAMP,
+                reversal_reason = ?,
+                reversed_by = ?
+            WHERE id = ? AND reversed = 0
+          `).run('Exclusão do lançamento', req.user.id, movement.id);
+        }
+      }
+    }
+
+    db.prepare(`
+      DELETE FROM bank_operation_launches
+      WHERE id = ? AND day_id = ?
+    `).run(launch.id, day.id);
+  })();
 
   return res.json(
     serialize(req, ownedDay(req, day.id))

@@ -75,7 +75,7 @@
             Finalidade
             <select v-model="account.purpose">
               <option value="both">Pagar e Receber</option>
-              <option value="pay">Pagar</option>
+              <option value="receive">Só Receber</option>
             </select>
           </label>
 
@@ -245,7 +245,7 @@
         <input v-model="newBank.name" placeholder="Nome do banco" />
         <select v-model="newBank.purpose">
           <option value="both">Pagar e Receber</option>
-          <option value="pay">Pagar</option>
+          <option value="receive">Só Receber</option>
         </select>
         <input
           v-model="newBank.openingBalance"
@@ -351,6 +351,16 @@
           <label>
             Casa
             <input v-model="launchForm.casa" placeholder="Nome da casa" />
+          </label>
+
+          <label>
+            Banco
+            <select v-model="launchForm.accountId" :disabled="!state.accounts.length">
+              <option value="">Selecione...</option>
+              <option v-for="a in state.accounts" :key="a.id" :value="a.id">
+                {{ a.name }} ({{ money(a.currentBalance) }})
+              </option>
+            </select>
           </label>
 
           <label>
@@ -574,6 +584,7 @@ const renameValue = ref('')
 
 const launchForm = reactive({
   casa: '',
+  accountId: '',
   deposito: '',
   saque: ''
 })
@@ -616,18 +627,12 @@ const launchCalculos = computed(() => {
   const deposito = numberValue(launchForm.deposito)
   const saque = numberValue(launchForm.saque)
 
-  if ([81, 121, 241].includes(deposito)) {
-    const lucroBlogueira = saque
-    const banca = 0
-    const lucao = Math.round(saque * 0.5 * 100) / 100
-    return { banca, lucroBlogueira, lucao }
-  }
-
   const lucroBlogueira = calcularLucro(deposito)
   const banca = deposito - lucroBlogueira
-  const lucao = saque <= banca
-    ? Math.round(((banca - saque) + lucroBlogueira) * 100) / 100
-    : Math.round(((lucroBlogueira / 2) + ((saque - banca) / 2)) * 100) / 100
+  const lucroLiquido = saque - deposito
+  const lucao = lucroLiquido > 0
+    ? Math.round((lucroLiquido * 100) / 2) / 100
+    : 0
   return { banca, lucroBlogueira, lucao }
 })
 
@@ -1029,6 +1034,11 @@ async function launch() {
     return
   }
 
+  if (!launchForm.accountId) {
+    alert('Selecione o banco de origem do depósito.')
+    return
+  }
+
   const isEditing = editingId.value !== null
   pendingAction.value = 'launch'
 
@@ -1043,6 +1053,7 @@ async function launch() {
       url,
       {
         casa: launchForm.casa,
+        accountId: launchForm.accountId,
         deposito: launchForm.deposito,
         saque: launchForm.saque || ''
       },
@@ -1050,7 +1061,7 @@ async function launch() {
     )
 
     apply(data)
-    Object.assign(launchForm, { casa: '', deposito: '', saque: '' })
+    Object.assign(launchForm, { casa: '', accountId: '', deposito: '', saque: '' })
     editingId.value = null
   } catch (error) {
     alert(
@@ -1063,13 +1074,14 @@ async function launch() {
 }
 
 function cancelEdit() {
-  Object.assign(launchForm, { casa: '', deposito: '', saque: '' })
+  Object.assign(launchForm, { casa: '', accountId: '', deposito: '', saque: '' })
   editingId.value = null
 }
 
 function editLaunch(l) {
   editingId.value = l.id
   launchForm.casa = l.casa
+  launchForm.accountId = l.accountId || l.movementId ? (state.accounts.find(a => a.id === l.accountId)?.id || '') : ''
   launchForm.deposito = String(l.deposito)
   launchForm.saque = l.saque ? String(l.saque) : ''
   window.scrollTo({ top: document.querySelector('.launch-panel')?.offsetTop - 20, behavior: 'smooth' })
@@ -1352,7 +1364,7 @@ button:disabled:hover{transform:none}
 }
 .bank-actions button{flex:1}
 .launch-panel{display:grid;gap:18px}
-.launch-form{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:12px;align-items:end}
+.launch-form{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr auto;gap:12px;align-items:end}
 .launch-actions{display:flex;gap:8px}
 .compact{padding:6px 10px;font-size:12px}
 .actions-cell{display:flex;gap:6px}
@@ -1387,7 +1399,8 @@ th{font-size:12px;color:var(--muted)}
 @media(max-width:1000px){
   .summary-grid{grid-template-columns:repeat(2,1fr)}
   .bank-grid{grid-template-columns:repeat(2,1fr)}
-  .draft-card,.close-panel,.new-bank,.launch-form{grid-template-columns:1fr 1fr}
+  .draft-card,.close-panel,.new-bank{grid-template-columns:1fr 1fr}
+  .launch-form{grid-template-columns:1fr 1fr}
   .launch-actions{grid-column:1/-1}
   .draft-number{display:none}
   .closing-result{grid-template-columns:1fr 1fr}
