@@ -53,11 +53,14 @@ function getTarget(req, userId) {
 
   if (!target) return null;
 
-  if (
-    !isSuperAdmin(req) &&
-    Number(target.company_id) !== Number(req.user.companyId)
-  ) {
-    return null;
+  if (!isSuperAdmin(req)) {
+    if (Number(target.company_id) !== Number(req.user.companyId)) {
+      return null;
+    }
+
+    if (req.user.groupId && Number(target.group_id) !== Number(req.user.groupId)) {
+      return null;
+    }
   }
 
   return target;
@@ -135,6 +138,8 @@ router.post('/', auth, requireAdmin, (req, res) => {
     });
   }
 
+  const groupId = req.user.groupId || null;
+
   const passwordHash = bcrypt.hashSync(password, 10);
 
   try {
@@ -147,10 +152,11 @@ router.post('/', auth, requireAdmin, (req, res) => {
           role,
           active,
           company_id,
+          group_id,
           updated_at
         )
-        VALUES (?, ?, ?, 'operator', 1, ?, CURRENT_TIMESTAMP)
-      `).run(name, email, passwordHash, companyId);
+        VALUES (?, ?, ?, 'operator', 1, ?, ?, CURRENT_TIMESTAMP)
+      `).run(name, email, passwordHash, companyId, groupId);
 
       const userId = Number(result.lastInsertRowid);
 
@@ -167,7 +173,8 @@ router.post('/', auth, requireAdmin, (req, res) => {
       audit(req, target, 'USER_CREATED', {
         name,
         email,
-        role: 'operator'
+        role: 'operator',
+        groupId
       });
 
       return userId;
@@ -188,6 +195,8 @@ router.post('/', auth, requireAdmin, (req, res) => {
 });
 
 router.get('/', auth, requireAdmin, (req, res) => {
+  const isGroupAdmin = !isSuperAdmin(req) && req.user.groupId;
+
   const users = isSuperAdmin(req)
     ? db.prepare(`
         SELECT
@@ -197,27 +206,47 @@ router.get('/', auth, requireAdmin, (req, res) => {
           u.role,
           u.active,
           u.company_id,
+          u.group_id,
           COALESCE(w.balance_cents, 0) AS balance_cents
         FROM users u
         LEFT JOIN wallets w ON w.user_id = u.id
         WHERE u.role = 'operator'
         ORDER BY u.id DESC
       `).all()
-    : db.prepare(`
-        SELECT
-          u.id,
-          u.name,
-          u.email,
-          u.role,
-          u.active,
-          u.company_id,
-          COALESCE(w.balance_cents, 0) AS balance_cents
-        FROM users u
-        LEFT JOIN wallets w ON w.user_id = u.id
-        WHERE u.role = 'operator'
-          AND u.company_id = ?
-        ORDER BY u.id DESC
-      `).all(req.user.companyId);
+    : isGroupAdmin
+      ? db.prepare(`
+          SELECT
+            u.id,
+            u.name,
+            u.email,
+            u.role,
+            u.active,
+            u.company_id,
+            u.group_id,
+            COALESCE(w.balance_cents, 0) AS balance_cents
+          FROM users u
+          LEFT JOIN wallets w ON w.user_id = u.id
+          WHERE u.role = 'operator'
+            AND u.company_id = ?
+            AND u.group_id = ?
+          ORDER BY u.id DESC
+        `).all(req.user.companyId, req.user.groupId)
+      : db.prepare(`
+          SELECT
+            u.id,
+            u.name,
+            u.email,
+            u.role,
+            u.active,
+            u.company_id,
+            u.group_id,
+            COALESCE(w.balance_cents, 0) AS balance_cents
+          FROM users u
+          LEFT JOIN wallets w ON w.user_id = u.id
+          WHERE u.role = 'operator'
+            AND u.company_id = ?
+          ORDER BY u.id DESC
+        `).all(req.user.companyId);
 
   return res.json({
     ok: true,

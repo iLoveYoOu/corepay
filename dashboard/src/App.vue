@@ -99,7 +99,7 @@
 
       <main>
         <section v-if="tab==='banking'">
-          <BankOperations />
+          <BankOperations :userRole="wallet.role" />
         </section>
 
         <section v-if="tab==='directory'">

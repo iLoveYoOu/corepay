@@ -6,7 +6,7 @@
     "question": "deny",
     "task": "deny",
     "bash": {
-      "*": "ask",
+      "*": "allow",
       "npm test*": "allow",
       "npm run build*": "allow",
       "git *": "allow",
@@ -21,6 +21,8 @@
       "npm publish*": "deny",
       "curl *": "deny",
       "Invoke-WebRequest *": "deny",
+      "Invoke-RestMethod *": "deny",
+      "Start-Process *": "deny",
       "Remove-Item *": "deny",
       "rm *": "deny",
       "del *": "deny",

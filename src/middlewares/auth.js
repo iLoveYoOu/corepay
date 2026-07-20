@@ -28,10 +28,14 @@ function auth(req, res, next) {
         u.active,
         u.company_id,
         u.session_version,
-        c.active AS company_active
+        u.group_id,
+        c.active AS company_active,
+        g.name AS group_name
       FROM users u
       LEFT JOIN companies c
         ON c.id = u.company_id
+      LEFT JOIN responsavel_groups g
+        ON g.id = u.group_id AND g.active = 1
       WHERE u.id = ?
     `).get(payload.id);
 
@@ -86,7 +90,9 @@ function auth(req, res, next) {
       id: user.id,
       role: user.role,
       companyId: currentCompanyId,
-      sessionVersion: Number(user.session_version)
+      sessionVersion: Number(user.session_version),
+      groupId: user.group_id,
+      groupName: user.group_name
     };
 
     next();

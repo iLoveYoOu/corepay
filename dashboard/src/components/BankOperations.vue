@@ -185,6 +185,12 @@
         <div>
           <span class="eyebrow">FECHAMENTO</span>
           <h2>Calcular repasse do dia</h2>
+          <div v-if="state.userGroup" class="group-badge">
+            Fechar dia para <strong>{{ state.userGroup.groupName }}</strong>
+          </div>
+          <div v-else class="group-badge no-group">
+            ⚠️ Você não possui um grupo/responsável definido. Procure o Superadmin.
+          </div>
           <p>
             Regra CHINO: LÍQUIDO = total sacado − total banca / METADE = LÍQUIDO ÷ 2 / LUCÃO = METADE − taxa blogueira.
             Valores negativos = crédito/compensação a receber do Lucão.
@@ -230,9 +236,19 @@
           <strong :class="closePreview < 0 ? 'negative' : ''">{{ money(closePreview) }}</strong>
         </div>
 
+        <label v-if="userRole==='super_admin' && state.userGroup">
+          Alterar responsável
+          <select v-model="overrideGroupId">
+            <option value="">Manter ({{ state.userGroup.groupName }})</option>
+            <option v-for="g in availableGroups" :key="g.id" :value="g.id" :disabled="!g.active">
+              {{ g.name }}
+            </option>
+          </select>
+        </label>
+
         <button
           class="orange"
-          :disabled="actionBusy"
+          :disabled="actionBusy || !state.userGroup"
           @click="closeDay"
         >
           {{ pendingAction === 'close' ? 'Fechando...' : 'Confirmar fechamento' }}
@@ -497,6 +513,7 @@
             <tr>
               <th>Operação</th>
               <th>Status</th>
+              <th>Responsável</th>
               <th>Inicial</th>
               <th>Final</th>
               <th>Lucro</th>
@@ -512,6 +529,7 @@
                   {{ day.status === 'closed' ? 'Fechado' : 'Aberto' }}
                 </span>
               </td>
+              <td>{{ day.groupName || '-' }}</td>
               <td>{{ money(day.openingTotal) }}</td>
               <td>
                 {{
@@ -543,7 +561,7 @@
               </td>
             </tr>
             <tr v-if="!state.history.length">
-              <td colspan="7" class="empty-row">
+              <td colspan="8" class="empty-row">
                 Nenhum fechamento anterior.
               </td>
             </tr>
@@ -558,11 +576,17 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api, authHeaders } from '../services/api'
 
+const props = defineProps({
+  userRole: { type: String, default: 'operator' }
+})
+
 const loading = ref(true)
 const refreshing = ref(false)
 const pendingAction = ref('')
 const showClose = ref(false)
 const showNewBank = ref(false)
+const overrideGroupId = ref('')
+const availableGroups = ref([])
 
 const state = reactive({
   operationDate: '',
@@ -571,6 +595,7 @@ const state = reactive({
   movements: [],
   launches: [],
   totalLucao: 0,
+  userGroup: null,
   history: [],
   totals: {
     opening: 0,
@@ -839,6 +864,9 @@ function apply(data) {
   state.launches = data.launches || []
   state.totalLucao = data.totalLucao || 0
   state.totals = data.totals || state.totals
+  if (data.userGroup) {
+    state.userGroup = data.userGroup
+  }
 }
 
 async function load() {
@@ -848,20 +876,24 @@ async function load() {
   loading.value = true
 
   try {
-    const [todayResponse, historyResponse] =
-      await Promise.all([
-        api.get(
-          '/bank-operations/today',
-          authHeaders()
-        ),
-        api.get(
-          '/bank-operations/history?limit=30',
-          authHeaders()
-        )
-      ])
+    const requests = [
+      api.get('/bank-operations/today', authHeaders()),
+      api.get('/bank-operations/history?limit=30', authHeaders())
+    ]
+
+    if (props.userRole === 'super_admin') {
+      requests.push(api.get('/directory/groups', authHeaders()))
+    }
+
+    const [todayResponse, historyResponse, groupsResponse] =
+      await Promise.all(requests)
 
     apply(todayResponse.data)
     state.history = historyResponse.data.days || []
+
+    if (groupsResponse) {
+      availableGroups.value = groupsResponse.data.groups || []
+    }
   } catch (error) {
     alert(
       error.response?.data?.error ||
@@ -1132,16 +1164,27 @@ async function deleteLaunch(l) {
 async function closeDay() {
   if (actionBusy.value) return
 
-  if (!confirm('Confirma o fechamento definitivo deste dia?')) {
+  if (overrideGroupId.value) {
+    const group = availableGroups.value.find(g => g.id === Number(overrideGroupId.value))
+    if (!confirm(`Alterar responsável para "${group?.name || overrideGroupId.value}" e fechar?`)) {
+      return
+    }
+  } else if (!confirm('Confirma o fechamento definitivo deste dia?')) {
     return
   }
 
   pendingAction.value = 'close'
 
   try {
+    const body = { adjustments: closing.adjustments }
+
+    if (overrideGroupId.value) {
+      body.overrideGroupId = Number(overrideGroupId.value)
+    }
+
     const { data } = await api.post(
       `/bank-operations/days/${state.day.id}/close`,
-      { adjustments: closing.adjustments },
+      body,
       authHeaders()
     )
 
@@ -1154,6 +1197,7 @@ async function closeDay() {
 
     state.history = historyResponse.data.days || []
     resetClosing()
+    overrideGroupId.value = ''
   } catch (error) {
     alert(
       error.response?.data?.error ||
@@ -1373,6 +1417,12 @@ button:disabled:hover{transform:none}
 .closing-result strong{font-size:23px}
 .negative{color:#ff6b6b}
 .send-total{background:#ffffff18;border-radius:14px;padding:14px}
+.group-badge{
+  background:#e8f5e9;border-radius:12px;padding:10px 16px;
+  display:inline-block;font-size:15px;color:#2e7d32;font-weight:700;
+  margin:8px 0
+}
+.group-badge.no-group{background:#fce4ec;color:#c62828}
 .close-panel{
   display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr auto;
   align-items:end;gap:16px;border:2px solid #ffd5ae

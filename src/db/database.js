@@ -397,6 +397,51 @@ db.prepare(`
   )
 `).run();
 
+/*
+ * Grupos / responsáveis.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS responsavel_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  admin_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (admin_user_id) REFERENCES users(id)
+);
+`);
+
+if (!columnExists('users', 'group_id')) {
+  db.exec(`
+    ALTER TABLE users
+    ADD COLUMN group_id INTEGER
+  `);
+}
+
+const existingGroups = db.prepare(
+  'SELECT COUNT(*) AS total FROM responsavel_groups'
+).get();
+
+if (existingGroups.total === 0) {
+  const insertGroup = db.prepare(`
+    INSERT INTO responsavel_groups (name, active)
+    VALUES (?, 1)
+  `);
+
+  for (const name of ['Lucão', 'Gordão', 'Meu grupo']) {
+    insertGroup.run(name);
+  }
+}
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_users_group
+ON users(group_id);
+
+CREATE INDEX IF NOT EXISTS idx_groups_admin
+ON responsavel_groups(admin_user_id);
+`);
+
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_users_company
 ON users(company_id);

@@ -28,6 +28,13 @@
       <button @click="section='audit'">
         Auditoria
       </button>
+
+      <button
+        v-if="me.role==='super_admin'"
+        @click="section='groups'"
+      >
+        Grupos
+      </button>
     </div>
 
     <section v-if="section==='users'">
@@ -82,6 +89,24 @@
           </option>
         </select>
 
+        <select
+          v-if="me.role==='super_admin'"
+          v-model="form.groupId"
+        >
+          <option value="">
+            Sem grupo
+          </option>
+
+          <option
+            v-for="g in groups"
+            :key="g.id"
+            :value="g.id"
+            :disabled="!g.active"
+          >
+            {{ g.name }}{{ g.active ? '' : ' (inativo)' }}
+          </option>
+        </select>
+
         <button @click="createUser">
           Criar usuário
         </button>
@@ -92,6 +117,7 @@
           <tr>
             <th>Nome</th>
             <th>Empresa</th>
+            <th>Grupo</th>
             <th>E-mail</th>
             <th>Perfil</th>
             <th>Status</th>
@@ -109,6 +135,7 @@
           >
             <td>{{ user.name }}</td>
             <td>{{ user.company_name }}</td>
+            <td>{{ user.group_name || '-' }}</td>
             <td>{{ user.email }}</td>
             <td>{{ roleName(user.role) }}</td>
             <td>
@@ -248,6 +275,110 @@
       </table>
     </section>
 
+    <section v-if="section==='groups' && me.role==='super_admin'">
+      <div class="directory-form">
+        <h2>Novo grupo</h2>
+        <input v-model="groupForm.name" placeholder="Nome do grupo" />
+        <button @click="createGroup">Criar grupo</button>
+      </div>
+
+      <div v-if="ungrouped.length" class="directory-form warning-form">
+        <h2>Usuários sem grupo</h2>
+        <p>{{ ungrouped.length }} operador(es) precisa(m) de grupo</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Empresa</th>
+              <th>Grupo</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in ungrouped" :key="u.id">
+              <td>{{ u.name }}</td>
+              <td>{{ companyName(u.company_id) }}</td>
+              <td>
+                <select v-model="u.assignGroupId">
+                  <option value="">Selecione...</option>
+                  <option v-for="g in groups" :key="g.id" :value="g.id" :disabled="!g.active">
+                    {{ g.name }}{{ g.active ? '' : ' (inativo)' }}
+                  </option>
+                </select>
+              </td>
+              <td>
+                <button :disabled="!u.assignGroupId" @click="assignUserGroup(u)">Vincular</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Grupo</th>
+            <th>Status</th>
+            <th>Operadores</th>
+            <th>Fechamentos</th>
+            <th>Administrador</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="g in groups" :key="g.id">
+            <td>
+              <template v-if="editingGroupId === g.id">
+                <input v-model="editingGroupName" @keyup.enter="saveGroup(g)" @keyup.escape="cancelEditGroup" />
+              </template>
+              <template v-else>
+                <strong>{{ g.name }}</strong>
+              </template>
+            </td>
+            <td>{{ g.active ? 'Ativo' : 'Inativo' }}</td>
+            <td>{{ g.user_count }}</td>
+            <td>{{ g.closing_count }}</td>
+            <td>
+              <select :value="g.admin_user_id || ''" @change="setGroupAdmin(g, $event.target.value)">
+                <option value="">Nenhum</option>
+                <option v-for="a in admins" :key="a.id" :value="a.id">
+                  {{ a.name }} ({{ a.email }})
+                </option>
+              </select>
+            </td>
+            <td>
+              <button @click="startEditGroup(g)">Editar</button>
+              <button :class="g.active ? 'danger' : ''" @click="toggleGroup(g)">
+                {{ g.active ? 'Desativar' : 'Ativar' }}
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div v-if="selectedGroupMembers.length" class="members-section">
+        <h3>Membros do grupo</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>E-mail</th>
+              <th>Empresa</th>
+              <th>Perfil</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in selectedGroupMembers" :key="m.id">
+              <td>{{ m.name }}</td>
+              <td>{{ m.email }}</td>
+              <td>{{ m.company_name }}</td>
+              <td>{{ roleName(m.role) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <div
       v-if="resetTarget"
       class="modal-backdrop"
@@ -310,13 +441,22 @@ const form = ref({
   email: '',
   password: '',
   role: 'operator',
-  companyId: ''
+  companyId: '',
+  groupId: ''
 })
 
 const companyForm = ref({
   name: '',
   code: ''
 })
+
+const groups = ref([])
+const ungrouped = ref([])
+const admins = ref([])
+const selectedGroupMembers = ref([])
+const editingGroupId = ref(null)
+const editingGroupName = ref('')
+const groupForm = ref({ name: '' })
 
 function roleName(role) {
   const names = {
@@ -379,6 +519,14 @@ async function loadAll() {
     )
   }
 
+  if (me.value.role === 'super_admin') {
+    requests.push(
+      api.get('/directory/groups', authHeaders()),
+      api.get('/directory/ungrouped', authHeaders()),
+      api.get('/directory/groups/admins', authHeaders())
+    )
+  }
+
   const responses = await Promise.all(requests)
 
   users.value = responses[0].data.users || []
@@ -387,6 +535,12 @@ async function loadAll() {
   if (responses[2]) {
     companies.value =
       responses[2].data.companies || []
+  }
+
+  if (responses[3]) {
+    groups.value = responses[3].data.groups || []
+    ungrouped.value = (responses[4]?.data?.users || []).map(u => ({ ...u, assignGroupId: '' }))
+    admins.value = responses[5]?.data?.admins || []
   }
 
   if (
@@ -413,7 +567,8 @@ async function createUser() {
       companyId:
         me.value.role === 'super_admin'
           ? ''
-          : me.value.company_id
+          : me.value.company_id,
+      groupId: ''
     }
 
     await loadAll()
@@ -558,6 +713,101 @@ async function toggleCompany(company) {
       'Erro ao alterar empresa.'
     )
   }
+}
+
+function companyName(companyId) {
+  const c = companies.value.find(c => c.id === companyId)
+  return c ? c.name : `Empresa #${companyId}`
+}
+
+async function createGroup() {
+  if (!groupForm.value.name.trim()) {
+    alert('Nome do grupo é obrigatório.')
+    return
+  }
+
+  try {
+    await api.post('/directory/groups', groupForm.value, authHeaders())
+    groupForm.value = { name: '' }
+    await loadGroups()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Erro ao criar grupo.')
+  }
+}
+
+function startEditGroup(g) {
+  editingGroupId.value = g.id
+  editingGroupName.value = g.name
+}
+
+function cancelEditGroup() {
+  editingGroupId.value = null
+  editingGroupName.value = ''
+}
+
+async function saveGroup(g) {
+  if (!editingGroupName.value.trim()) return
+
+  try {
+    await api.put(`/directory/groups/${g.id}`, { name: editingGroupName.value }, authHeaders())
+    editingGroupId.value = null
+    editingGroupName.value = ''
+    await loadGroups()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Erro ao editar grupo.')
+  }
+}
+
+async function toggleGroup(g) {
+  try {
+    await api.patch(`/directory/groups/${g.id}/toggle`, {}, authHeaders())
+    await loadGroups()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Erro ao alterar grupo.')
+  }
+}
+
+async function setGroupAdmin(g, adminUserId) {
+  try {
+    await api.put(`/directory/groups/${g.id}`, {
+      name: g.name,
+      adminUserId: adminUserId || null
+    }, authHeaders())
+    await loadGroups()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Erro ao definir administrador.')
+  }
+}
+
+async function assignUserGroup(u) {
+  if (!u.assignGroupId) return
+
+  try {
+    await api.post(`/directory/groups/${u.assignGroupId}/assign`, {
+      userId: u.id
+    }, authHeaders())
+    await loadGroups()
+    await loadUngrouped()
+  } catch (err) {
+    alert(err.response?.data?.error || 'Erro ao vincular usuário.')
+  }
+}
+
+async function loadGroups() {
+  const [groupsResponse, ungroupedResponse, adminsResponse] = await Promise.all([
+    api.get('/directory/groups', authHeaders()),
+    api.get('/directory/ungrouped', authHeaders()),
+    api.get('/directory/groups/admins', authHeaders())
+  ])
+
+  groups.value = groupsResponse.data.groups || []
+  ungrouped.value = (ungroupedResponse.data.users || []).map(u => ({ ...u, assignGroupId: '' }))
+  admins.value = adminsResponse.data.admins || []
+  selectedGroupMembers.value = []
+}
+
+async function loadAllGroups() {
+  await loadGroups()
 }
 
 onMounted(loadAll)

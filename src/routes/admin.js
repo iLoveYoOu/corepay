@@ -24,11 +24,14 @@ function getTarget(req, userId) {
 
   if (!target) return null;
 
-  if (
-    req.user.role !== 'super_admin' &&
-    Number(target.company_id) !== Number(req.user.companyId)
-  ) {
-    return null;
+  if (req.user.role !== 'super_admin') {
+    if (Number(target.company_id) !== Number(req.user.companyId)) {
+      return null;
+    }
+
+    if (req.user.groupId && Number(target.group_id) !== Number(req.user.groupId)) {
+      return null;
+    }
   }
 
   return target;

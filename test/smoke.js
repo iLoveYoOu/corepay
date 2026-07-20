@@ -787,6 +787,26 @@ async function run() {
   });
   assert(revoked.status === 401, 'Sessão antiga não foi revogada', revoked);
 
+  // O fechamento agora exige grupo. Faça a atribuição antes dos testes CHINO
+  // e só então crie a sessão que será usada por todos os fechamentos abaixo.
+  const groupsResponse = await request('/directory/groups', {
+    headers: adminHeaders
+  });
+  assert(groupsResponse.status === 200, 'Listar grupos falhou', groupsResponse);
+  assert(groupsResponse.body.groups.length >= 3, 'Deveria ter pelo menos 3 grupos', groupsResponse);
+
+  const lucaoGroup = groupsResponse.body.groups.find(g => g.name === 'Lucão');
+  const gordaoGroup = groupsResponse.body.groups.find(g => g.name === 'Gordão');
+  assert(lucaoGroup, 'Grupo Lucão não encontrado', groupsResponse);
+  assert(gordaoGroup, 'Grupo Gordão não encontrado', groupsResponse);
+
+  const assignResp = await request(`/directory/groups/${lucaoGroup.id}/assign`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ userId: operator.body.user_id })
+  });
+  assert(assignResp.status === 200, 'Vincular operador ao Lucão falhou', assignResp);
+
   // ── CHINO closing tests ──
   const chinoSession = await request('/auth/login', {
     method: 'POST',
@@ -991,7 +1011,10 @@ async function run() {
     const closeReopen = await request(`/bank-operations/days/${reopenDayId}/close`, {
       method: 'POST',
       headers: adminHeaders,
-      body: JSON.stringify({ adjustments: '0' })
+      body: JSON.stringify({
+        adjustments: '0',
+        overrideGroupId: lucaoGroup.id
+      })
     });
     assert(closeReopen.status === 200, 'Fechamento para reopen falhou', closeReopen);
     assert(closeReopen.body.day.status === 'closed', 'Dia não ficou fechado', closeReopen);
@@ -1174,6 +1197,317 @@ async function run() {
           closed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(closedForEmptyId);
+  }
+
+  // ── Group / Responsible tests ──
+  {
+    // Ungrouped users list
+    const ungroupedResp = await request('/directory/ungrouped', {
+      headers: adminHeaders
+    });
+    assert(ungroupedResp.status === 200, 'Listar sem grupo falhou', ungroupedResp);
+
+    // Verify operator now has group via users listing
+    const usersAfterGroup = await request('/directory/users', {
+      headers: adminHeaders
+    });
+    const groupedOperator = usersAfterGroup.body.users.find(u => u.id === operator.body.user_id);
+    assert(groupedOperator && groupedOperator.group_id === lucaoGroup.id, 'Operador não vinculado ao grupo', groupedOperator);
+
+    // Operator without group cannot close
+    // Create a new operator without group
+    const noGroupUser = await request('/directory/users', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: 'No Group',
+        email: 'nogroup@corepay.local',
+        password: 'NoGroup123!',
+        companyId: secondCompany.body.companyId
+      })
+    });
+    assert(noGroupUser.status === 201, 'Criação de usuário sem grupo falhou', noGroupUser);
+
+    const noGroupLogin = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'nogroup@corepay.local',
+        password: 'NoGroup123!'
+      })
+    });
+    assert(noGroupLogin.status === 200, 'Login usuário sem grupo falhou', noGroupLogin);
+
+    const noGroupHeaders = { authorization: `Bearer ${noGroupLogin.body.token}` };
+
+    // Create an open day for no-group user
+    const noGroupOpen = await request('/bank-operations/open', {
+      method: 'POST',
+      headers: noGroupHeaders,
+      body: JSON.stringify({
+        accounts: [{ name: 'Test', purpose: 'both', openingBalance: '1000' }]
+      })
+    });
+    assert(noGroupOpen.status === 201, 'Abertura para usuário sem grupo falhou', noGroupOpen);
+
+    // Try to close - should be blocked
+    const blockedClose = await request(`/bank-operations/days/${noGroupOpen.body.day.id}/close`, {
+      method: 'POST',
+      headers: noGroupHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(
+      blockedClose.status === 400 && blockedClose.body.error.includes('grupo'),
+      'Fechamento sem grupo não foi bloqueado',
+      blockedClose
+    );
+
+    // Cleanup no-group user data
+    db.prepare(`DELETE FROM bank_operation_launches WHERE day_id = ?`).run(noGroupOpen.body.day.id);
+    db.prepare(`DELETE FROM bank_operation_movements WHERE day_id = ?`).run(noGroupOpen.body.day.id);
+    db.prepare(`DELETE FROM bank_operation_accounts WHERE day_id = ?`).run(noGroupOpen.body.day.id);
+    db.prepare(`DELETE FROM bank_operation_days WHERE id = ?`).run(noGroupOpen.body.day.id);
+
+    // Operator with group can close and group is snapshotted
+    // Use the chino session which has group=Lucão
+    const groupCloseDay = createTestDay();
+    addLaunch(groupCloseDay, 100000, 80000, 60000, 20000);
+    const groupClose = await request(`/bank-operations/days/${groupCloseDay}/close`, {
+      method: 'POST',
+      headers: chinoHeaders,
+      body: JSON.stringify({ adjustments: '0' })
+    });
+    assert(groupClose.status === 200, 'Fechamento com grupo falhou', groupClose);
+    assert(groupClose.body.day.groupId === lucaoGroup.id, 'Group ID não salvo no fechamento', groupClose);
+    assert(groupClose.body.day.groupName === 'Lucão', 'Group name não salvo no fechamento', groupClose);
+
+    // History shows group
+    const groupHistory = await request('/bank-operations/history?limit=30', {
+      headers: chinoHeaders
+    });
+    const closedWithGroup = groupHistory.body.days.find(d => d.id === groupCloseDay);
+    assert(closedWithGroup && closedWithGroup.groupName === 'Lucão', 'Histórico não mostra grupo', closedWithGroup);
+
+    // Transfer operator to Gordão - old close must still show Lucão
+    const transferResp = await request(`/directory/groups/${gordaoGroup.id}/assign`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ userId: operator.body.user_id })
+    });
+    assert(transferResp.status === 200, 'Transferir operador falhou', transferResp);
+
+    const transferredOperatorLogin = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'operador.smoke@corepay.local',
+        password: 'NovaSenha123!'
+      })
+    });
+    assert(
+      transferredOperatorLogin.status === 200,
+      'Login após transferência de grupo falhou',
+      transferredOperatorLogin
+    );
+
+    const transferredOperatorHeaders = {
+      authorization: `Bearer ${transferredOperatorLogin.body.token}`
+    };
+
+    const oldCloseCheck = await request(`/bank-operations/days/${groupCloseDay}`, {
+      headers: transferredOperatorHeaders
+    });
+    assert(
+      oldCloseCheck.body.day.groupName === 'Lucão',
+      'Transferência alterou grupo do fechamento antigo',
+      oldCloseCheck
+    );
+
+    // Superadmin override close with audit
+    const overrideDay = createTestDay();
+    addLaunch(overrideDay, 50000, 40000, 30000, 10000);
+    const overrideClose = await request(`/bank-operations/days/${overrideDay}/close`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        adjustments: '0',
+        overrideGroupId: gordaoGroup.id
+      })
+    });
+    assert(overrideClose.status === 200, 'Override de grupo falhou', overrideClose);
+    assert(overrideClose.body.day.groupName === 'Gordão', 'Override não aplicou Gordão', overrideClose);
+
+    // Verify audit log for override
+    const auditAfterOverride = await request('/directory/audit?limit=50', {
+      headers: adminHeaders
+    });
+    const overrideLog = auditAfterOverride.body.logs.find(l => l.action === 'CLOSE_OVERRIDE');
+    assert(overrideLog, 'Override não auditado', auditAfterOverride.body.logs);
+    assert(overrideLog.ip_address, 'Override sem IP', overrideLog);
+
+    // Create a group admin and test isolation
+    const groupAdminUser = await request('/directory/users', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: 'Lucao Admin',
+        email: 'lucao.admin@corepay.local',
+        password: 'LucaoAdmin123!',
+        role: 'admin',
+        companyId: secondCompany.body.companyId
+      })
+    });
+    assert(groupAdminUser.status === 201, 'Criação de admin falhou', groupAdminUser);
+
+    // Set as admin of Lucão group
+    const setAdminResp = await request(`/directory/groups/${lucaoGroup.id}`, {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: lucaoGroup.name,
+        adminUserId: groupAdminUser.body.userId
+      })
+    });
+    assert(setAdminResp.status === 200, 'Definir admin do grupo falhou', setAdminResp);
+
+    // Login as group admin
+    const groupAdminLogin = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lucao.admin@corepay.local',
+        password: 'LucaoAdmin123!'
+      })
+    });
+    assert(groupAdminLogin.status === 200, 'Login admin grupo falhou', groupAdminLogin);
+
+    const groupAdminHeaders = {
+      authorization: `Bearer ${groupAdminLogin.body.token}`
+    };
+
+    // Group admin sees only their group users
+    const groupAdminUsers = await request('/directory/users', {
+      headers: groupAdminHeaders
+    });
+    const allInLucao = groupAdminUsers.body.users.every(
+      u => !u.group_id || u.group_id === lucaoGroup.id
+    );
+    assert(allInLucao, 'Admin grupo viu usuários de outro grupo', groupAdminUsers);
+
+    // Group admin cannot see other group's closings (just verify user listing scope)
+    const groupAdminGroups = await request('/directory/groups', {
+      headers: groupAdminHeaders
+    });
+    assert(groupAdminGroups.status === 403, 'Admin grupo não deveria ver grupos', groupAdminGroups);
+
+    // ── Group isolation in history and day detail ──
+    // Superadmin can see ALL closings
+    const superHistory = await request('/bank-operations/history?limit=50', {
+      headers: adminHeaders
+    });
+    const superLucaoDays = superHistory.body.days.filter(d => d.groupName === 'Lucão');
+    const superGordaoDays = superHistory.body.days.filter(d => d.groupName === 'Gordão');
+    assert(
+      superLucaoDays.length >= 1 && superGordaoDays.length >= 1,
+      'Superadmin não vê todos os grupos no histórico',
+      { totalDays: superHistory.body.days.length, superLucaoDays: superLucaoDays.length, superGordaoDays: superGordaoDays.length }
+    );
+
+    // Group admin sees only their group's closings
+    const groupAdminHistory = await request('/bank-operations/history?limit=50', {
+      headers: groupAdminHeaders
+    });
+    const allFromLucao = groupAdminHistory.body.days.every(d => d.groupName === 'Lucão');
+    assert(
+      allFromLucao && groupAdminHistory.body.days.length >= 1,
+      'Admin grupo viu fechamentos de outro grupo no histórico',
+      groupAdminHistory.body.days.map(d => ({ id: d.id, groupName: d.groupName }))
+    );
+
+    // Group admin can access detail of their own group's closing
+    const lucaoDayId = groupAdminHistory.body.days[0].id;
+    const lucaoDetail = await request(`/bank-operations/days/${lucaoDayId}`, {
+      headers: groupAdminHeaders
+    });
+    assert(lucaoDetail.status === 200, 'Admin grupo não acessou detalhe do próprio grupo', lucaoDetail);
+    assert(lucaoDetail.body.day.groupName === 'Lucão', 'Detalhe não mostra grupo correto', lucaoDetail);
+
+    // Group admin CANNOT access detail of other group's closing
+    const gordaoDayId = superGordaoDays[0].id;
+    const gordaoDetail = await request(`/bank-operations/days/${gordaoDayId}`, {
+      headers: groupAdminHeaders
+    });
+    assert(
+      gordaoDetail.status === 404,
+      'Admin grupo acessou detalhe de fechamento de outro grupo',
+      gordaoDetail
+    );
+
+    // Admin do mesmo grupo em outra empresa não acessa o fechamento.
+    const thirdCompany = await request('/directory/companies', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: 'Empresa Três',
+        code: 'E3'
+      })
+    });
+    assert(thirdCompany.status === 201, 'Criação da terceira empresa falhou', thirdCompany);
+
+    const crossCompanyAdmin = await request('/directory/users', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        name: 'Lucao Admin E3',
+        email: 'lucao.admin.e3@corepay.local',
+        password: 'LucaoAdminE3123!',
+        role: 'admin',
+        companyId: thirdCompany.body.companyId
+      })
+    });
+    assert(
+      crossCompanyAdmin.status === 201,
+      'Criação do admin de outra empresa falhou',
+      crossCompanyAdmin
+    );
+
+    db.prepare(`
+      UPDATE users
+      SET group_id = ?
+      WHERE id = ?
+    `).run(lucaoGroup.id, crossCompanyAdmin.body.userId);
+
+    const crossCompanyAdminLogin = await request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lucao.admin.e3@corepay.local',
+        password: 'LucaoAdminE3123!'
+      })
+    });
+    assert(
+      crossCompanyAdminLogin.status === 200,
+      'Login do admin de outra empresa falhou',
+      crossCompanyAdminLogin
+    );
+
+    const crossCompanyHeaders = {
+      authorization: `Bearer ${crossCompanyAdminLogin.body.token}`
+    };
+
+    const crossCompanyHistory = await request('/bank-operations/history?limit=50', {
+      headers: crossCompanyHeaders
+    });
+    assert(
+      !crossCompanyHistory.body.days.some(day => day.id === lucaoDayId),
+      'Admin do mesmo grupo viu fechamento de outra empresa no histórico',
+      crossCompanyHistory
+    );
+
+    const crossCompanyDetail = await request(`/bank-operations/days/${lucaoDayId}`, {
+      headers: crossCompanyHeaders
+    });
+    assert(
+      crossCompanyDetail.status === 404,
+      'Admin de outra empresa acessou fechamento de empresa diferente',
+      crossCompanyDetail
+    );
   }
 
   // ── Audit login IP and User-Agent registration ──

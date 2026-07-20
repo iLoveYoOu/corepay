@@ -263,6 +263,27 @@ for (const [column, definition] of [
   }
 }
 
+if (!columnExists('bank_operation_days', 'group_id')) {
+  db.exec(`
+    ALTER TABLE bank_operation_days
+    ADD COLUMN group_id INTEGER
+  `);
+}
+
+if (!columnExists('bank_operation_days', 'group_name')) {
+  db.exec(`
+    ALTER TABLE bank_operation_days
+    ADD COLUMN group_name TEXT
+  `);
+}
+
+if (!columnExists('bank_operation_days', 'closed_by')) {
+  db.exec(`
+    ALTER TABLE bank_operation_days
+    ADD COLUMN closed_by INTEGER
+  `);
+}
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bank_days_user
   ON bank_operation_days(user_id, operation_date);
@@ -346,7 +367,67 @@ function ownedDay(req, id) {
   );
 }
 
+function closableDay(req, id) {
+  if (req.user.role === 'super_admin') {
+    return db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE id = ?
+    `).get(Number(id));
+  }
+
+  return ownedDay(req, id);
+}
+
+function accessibleDay(req, id) {
+  if (req.user.role === 'super_admin') {
+    return db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE id = ?
+    `).get(Number(id));
+  }
+
+  if (req.user.role === 'admin') {
+    if (req.user.groupId) {
+      return db.prepare(`
+        SELECT *
+        FROM bank_operation_days
+        WHERE id = ?
+          AND company_id = ?
+          AND group_id = ?
+      `).get(Number(id), req.user.companyId, req.user.groupId);
+    }
+
+    return db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE id = ?
+        AND company_id = ?
+    `).get(Number(id), req.user.companyId);
+  }
+
+  return ownedDay(req, id);
+}
+
+function getUserGroup(req) {
+  const user = db.prepare(`
+    SELECT
+      u.group_id,
+      g.name AS group_name
+    FROM users u
+    LEFT JOIN responsavel_groups g ON g.id = u.group_id AND g.active = 1
+    WHERE u.id = ?
+  `).get(req.user.id);
+
+  return user?.group_id
+    ? { groupId: user.group_id, groupName: user.group_name }
+    : null;
+}
+
 function serialize(req, day) {
+  const userGroup = getUserGroup(req);
+
   if (!day) {
     return {
       ok: true,
@@ -361,7 +442,8 @@ function serialize(req, day) {
         current: 0,
         entries: 0,
         exits: 0
-      }
+      },
+      userGroup
     };
   }
 
@@ -421,6 +503,13 @@ function serialize(req, day) {
     .filter(item => item.type === 'exit' && !item.reversed)
     .reduce((sum, item) => sum + item.amount_cents, 0);
 
+  const groupName = day.group_name ||
+    (day.group_id
+      ? db.prepare(`
+          SELECT name FROM responsavel_groups WHERE id = ?
+        `).get(day.group_id)?.name
+      : null);
+
   return {
     ok: true,
     operationDate: day.operation_date,
@@ -435,7 +524,9 @@ function serialize(req, day) {
       operatorShare: money(day.operator_share_cents),
       capitalReplacement: money(day.capital_replacement_cents),
       adjustments: money(day.adjustments_cents),
-      amountToSend: money(day.amount_to_send_cents)
+      amountToSend: money(day.amount_to_send_cents),
+      groupId: day.group_id,
+      groupName: groupName
     },
     accounts: accounts.map(account => ({
       ...account,
@@ -463,7 +554,8 @@ function serialize(req, day) {
       current: money(current),
       entries: money(entries),
       exits: money(exits)
-    }
+    },
+    userGroup
   };
 }
 
@@ -484,7 +576,7 @@ router.get('/today', auth, (req, res) => {
 });
 
 router.get('/days/:dayId', auth, (req, res) => {
-  const day = ownedDay(req, req.params.dayId);
+  const day = accessibleDay(req, req.params.dayId);
 
   if (!day) {
     return res.status(404).json({
@@ -1311,12 +1403,44 @@ router.delete('/days/:dayId/launches/:launchId', auth, (req, res) => {
 });
 
 router.post('/days/:dayId/close', auth, (req, res) => {
-  const day = ownedDay(req, req.params.dayId);
+  const day = closableDay(req, req.params.dayId);
 
   if (!day || day.status !== 'open') {
     return res.status(404).json({
       ok: false,
       error: 'Dia aberto não encontrado.'
+    });
+  }
+
+  const user = db.prepare(`
+    SELECT group_id FROM users WHERE id = ?
+  `).get(req.user.id);
+
+  let groupId = user?.group_id || null;
+  const isSuperAdmin = req.user.role === 'super_admin';
+  const overrideGroupId = req.body.overrideGroupId
+    ? Number(req.body.overrideGroupId)
+    : null;
+
+  if (overrideGroupId && isSuperAdmin) {
+    groupId = overrideGroupId;
+  }
+
+  if (!groupId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Você não possui um grupo/responsável definido. Procure o Superadmin para definir seu grupo antes de fechar.'
+    });
+  }
+
+  const group = db.prepare(`
+    SELECT name FROM responsavel_groups WHERE id = ? AND active = 1
+  `).get(groupId);
+
+  if (!group) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Seu grupo/responsável está inativo ou não existe. Procure o Superadmin.'
     });
   }
 
@@ -1375,29 +1499,60 @@ router.post('/days/:dayId/close', auth, (req, res) => {
   // A reposição de capital continua registrada separadamente, sem alterar esse valor.
   const amountToSend = mandarLucaoCents + adjustments;
 
-  db.prepare(`
-    UPDATE bank_operation_days
-    SET status = 'closed',
-        closing_total_cents = ?,
-        profit_total_cents = ?,
-        operator_share_cents = ?,
-        capital_replacement_cents = ?,
-        adjustments_cents = ?,
-        amount_to_send_cents = ?,
-        closed_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(
-    closing,
-    totalLucro,
-    metadeCents,
-    replacement,
-    adjustments,
-    amountToSend,
-    day.id
-  );
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE bank_operation_days
+      SET status = 'closed',
+          closing_total_cents = ?,
+          profit_total_cents = ?,
+          operator_share_cents = ?,
+          capital_replacement_cents = ?,
+          adjustments_cents = ?,
+          amount_to_send_cents = ?,
+          group_id = ?,
+          group_name = ?,
+          closed_by = ?,
+          closed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      closing,
+      totalLucro,
+      metadeCents,
+      replacement,
+      adjustments,
+      amountToSend,
+      groupId,
+      group.name,
+      req.user.id,
+      day.id
+    );
+
+    if (overrideGroupId && isSuperAdmin) {
+      db.prepare(`
+        INSERT INTO audit_logs (
+          company_id, actor_user_id, target_user_id,
+          action, details, ip_address
+        )
+        VALUES (?, ?, ?, 'CLOSE_OVERRIDE', ?, ?)
+      `).run(
+        day.company_id,
+        req.user.id,
+        day.user_id,
+        JSON.stringify({
+          originalGroupId: user?.group_id,
+          overrideGroupId,
+          groupName: group.name,
+          dayId: day.id,
+          operationDate: day.operation_date,
+          amountToSend: amountToSend
+        }),
+        req.ip || null
+      );
+    }
+  })();
 
   return res.json(
-    serialize(req, ownedDay(req, day.id))
+    serialize(req, closableDay(req, day.id))
   );
 });
 
@@ -1591,34 +1746,73 @@ router.get('/history', auth, (req, res) => {
     180
   );
 
-  const days = db.prepare(`
-    SELECT *
-    FROM bank_operation_days
-    WHERE user_id = ?
-      AND company_id = ?
-    ORDER BY operation_date DESC, id DESC
-    LIMIT ?
-  `).all(req.user.id, req.user.companyId, limit);
+  let days;
+
+  if (req.user.role === 'super_admin') {
+    days = db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      ORDER BY operation_date DESC, id DESC
+      LIMIT ?
+    `).all(limit);
+  } else if (req.user.role === 'admin' && req.user.groupId) {
+    days = db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE company_id = ?
+        AND group_id = ?
+      ORDER BY operation_date DESC, id DESC
+      LIMIT ?
+    `).all(req.user.companyId, req.user.groupId, limit);
+  } else if (req.user.role === 'admin') {
+    days = db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE company_id = ?
+      ORDER BY operation_date DESC, id DESC
+      LIMIT ?
+    `).all(req.user.companyId, limit);
+  } else {
+    days = db.prepare(`
+      SELECT *
+      FROM bank_operation_days
+      WHERE user_id = ?
+        AND company_id = ?
+      ORDER BY operation_date DESC, id DESC
+      LIMIT ?
+    `).all(req.user.id, req.user.companyId, limit);
+  }
 
   return res.json({
     ok: true,
-    days: days.map(day => ({
-      id: day.id,
-      operationDate: day.operation_date,
-      status: day.status,
-      openingTotal: money(day.opening_total_cents),
-      closingTotal:
-        day.closing_total_cents == null
-          ? null
-          : money(day.closing_total_cents),
-      profitTotal: money(day.profit_total_cents),
-      operatorShare: money(day.operator_share_cents),
-      capitalReplacement: money(day.capital_replacement_cents),
-      adjustments: money(day.adjustments_cents),
-      amountToSend: money(day.amount_to_send_cents),
-      openedAt: day.opened_at,
-      closedAt: day.closed_at
-    }))
+    days: days.map(day => {
+      const groupName = day.group_name ||
+        (day.group_id
+          ? db.prepare(`
+              SELECT name FROM responsavel_groups WHERE id = ?
+            `).get(day.group_id)?.name
+          : null);
+
+      return {
+        id: day.id,
+        operationDate: day.operation_date,
+        status: day.status,
+        openingTotal: money(day.opening_total_cents),
+        closingTotal:
+          day.closing_total_cents == null
+            ? null
+            : money(day.closing_total_cents),
+        profitTotal: money(day.profit_total_cents),
+        operatorShare: money(day.operator_share_cents),
+        capitalReplacement: money(day.capital_replacement_cents),
+        adjustments: money(day.adjustments_cents),
+        amountToSend: money(day.amount_to_send_cents),
+        openedAt: day.opened_at,
+        closedAt: day.closed_at,
+        groupId: day.group_id,
+        groupName: groupName
+      };
+    })
   });
 });
 
