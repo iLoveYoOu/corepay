@@ -25,6 +25,8 @@ const db = require('./src/db/database');
 
 const app = express();
 app.set('trust proxy', 1);
+const ARTAUTO_INSTALLER_URL =
+  'https://djmqsbrxcedmkbawzvyn.supabase.co/storage/v1/object/public/artauto-updates/downloads/Instalador-ArtAuto-2.1.22.exe';
 const seedAdmin = require('./src/db/seedAdmin');
 seedAdmin();
 
@@ -74,6 +76,13 @@ app.use(
 app.use('/admin', adminRoutes);
 app.use('/directory', directoryRoutes);
 app.use('/bank-operations', bankOperationRoutes);
+
+// Link curto público para a distribuição do instalador ArtAuto. O arquivo é
+// hospedado no Storage; esta rota não acessa dados nem rotas do CorePay.
+app.get('/install', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.redirect(302, ARTAUTO_INSTALLER_URL);
+});
 
 app.get('/health', (req, res) => {
   try {
