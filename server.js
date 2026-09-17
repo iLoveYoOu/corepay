@@ -26,7 +26,7 @@ const db = require('./src/db/database');
 const app = express();
 app.set('trust proxy', 1);
 const ARTAUTO_INSTALLER_URL =
-  'https://djmqsbrxcedmkbawzvyn.supabase.co/storage/v1/object/public/artauto-updates/downloads/Instalador-ArtAuto-2.1.22.exe';
+  'https://djmqsbrxcedmkbawzvyn.supabase.co/storage/v1/object/public/artauto-updates/downloads/Instalador-ArtAuto.exe';
 const seedAdmin = require('./src/db/seedAdmin');
 seedAdmin();
 
