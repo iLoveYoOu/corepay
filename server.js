@@ -77,11 +77,43 @@ app.use('/admin', adminRoutes);
 app.use('/directory', directoryRoutes);
 app.use('/bank-operations', bankOperationRoutes);
 
-// Link curto público para a distribuição do instalador ArtAuto. O arquivo é
-// hospedado no Storage; esta rota não acessa dados nem rotas do CorePay.
+// Rota leve para monitores externos manterem a instância disponível sem
+// baixar o instalador a cada verificação.
+app.get('/ping', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).json({ ok: true, service: 'ArtAuto' });
+});
+
+// Página pública do instalador. O download só começa quando a pessoa clica
+// no botão; assim, cancelar o "Salvar como" não reinicia o download sozinho.
 app.get('/install', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  return res.redirect(302, ARTAUTO_INSTALLER_URL);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  return res.status(200).send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Baixar ArtAuto</title>
+  <style>
+    :root { color-scheme: dark; font-family: Arial, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #071525; color: #f3f7fb; }
+    main { width: min(420px, calc(100% - 40px)); padding: 32px; border: 1px solid #23415f; border-radius: 18px; background: #0d2034; text-align: center; box-shadow: 0 18px 50px #0008; }
+    h1 { margin: 0 0 12px; }
+    p { color: #b9cadb; line-height: 1.5; }
+    a { display: inline-block; margin-top: 14px; padding: 14px 22px; border-radius: 10px; background: #14b8a6; color: #031716; font-weight: 700; text-decoration: none; }
+    small { display: block; margin-top: 18px; color: #8297aa; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Instalador ArtAuto</h1>
+    <p>O download só será iniciado quando você clicar no botão abaixo.</p>
+    <a href="${ARTAUTO_INSTALLER_URL}">Baixar ArtAuto</a>
+    <small>Se cancelar, esta página continuará aberta sem repetir o download.</small>
+  </main>
+</body>
+</html>`);
 });
 
 app.get('/health', (req, res) => {
