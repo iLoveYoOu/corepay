@@ -16,7 +16,9 @@ $('logout').onclick=async()=>{try{await api('logout',{});showLogin();}catch(e){e
 async function command(body){try{await api('command',body);}catch(e){error(e);}}
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>command({type:b.dataset.action}));
 const point=e=>{const r=$('screen').getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};};
-$('screen').onpointerdown=e=>{down=point(e);$('screen').setPointerCapture(e.pointerId);};
+$('screen').tabIndex=0;
+$('screen').onpaste=e=>{const text=e.clipboardData?.getData('text/plain');if(text){e.preventDefault();command({type:'text',text});}};
+$('screen').onpointerdown=e=>{down=point(e);$('screen').focus({preventScroll:true});$('screen').setPointerCapture(e.pointerId);};
 $('screen').onpointercancel=()=>{down=null;};
 $('screen').onpointerup=e=>{if(!down)return;const end=point(e),start=down;down=null;command(Math.hypot(start.x-end.x,start.y-end.y)<.015?{type:'tap',...end}:{type:'swipe',...start,x2:end.x,y2:end.y});};
 $('typing').onsubmit=e=>{e.preventDefault();command({type:'text',text:e.target.text.value});e.target.text.value='';};

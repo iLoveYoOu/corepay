@@ -4,12 +4,18 @@ const path = require('path');
 const express = require('express');
 const scrypt = require('util').promisify(crypto.scrypt);
 
-function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD_HASH, secure = true } = {}) {
+function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD_HASH, secure = true, pairingStore = null } = {}) {
   const router = express.Router();
   const sessions = new Map(), failures = new Map();
   let pairing = null, device = null;
   const random = () => crypto.randomBytes(32).toString('hex');
   const digest = s => crypto.createHash('sha256').update(s).digest('hex');
+  const restore = () => {
+    const saved = pairingStore?.load();
+    if (saved && saved.expiresAt > Date.now() && saved.passwordFingerprint === digest(passwordHash || ''))
+      return { ...saved, lastSeen: 0, frame: null, commands: [] };
+    return null;
+  };
   const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length
     && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
   router.use((req, res, next) => {
@@ -57,7 +63,8 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
   };
   const deviceAuth = (req, res, next) => {
     const token = (req.get('authorization') || '').replace(/^Bearer /, '');
-    if (!device || !equal(digest(token), device.tokenHash)) return res.status(401).json({ error: 'Pareie novamente' });
+    if (!device) device = restore();
+    if (!device || device.expiresAt < Date.now() || !equal(digest(token), device.tokenHash)) return res.status(401).json({ error: 'Pareie novamente' });
     device.lastSeen = Date.now(); next();
   };
   router.get('/api/session', browserAuth, (req, res) => res.json({ csrf: req.remoteSession.csrf }));
@@ -69,7 +76,9 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
     if (!pairing || pairing.expires < Date.now() || ++pairing.attempts > 5
       || !equal(String(req.body.code || ''), pairing.code)) return res.status(401).json({ error: 'Codigo invalido ou expirado' });
     const token = random(); pairing = null;
-    device = { tokenHash: digest(token), name: String(req.body.name || 'Android').slice(0, 80), lastSeen: Date.now(), frame: null, commands: [] };
+    device = { tokenHash: digest(token), name: String(req.body.name || 'Android').slice(0, 80), expiresAt: Date.now() + 90 * 86400000,
+      passwordFingerprint: digest(passwordHash || ''), lastSeen: Date.now(), frame: null, commands: [] };
+    pairingStore?.save(device);
     res.json({ token });
   });
   router.post('/api/device/frame', deviceAuth, express.raw({ type: 'image/jpeg', limit: '1mb' }), (req, res) => {
@@ -80,7 +89,8 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
     const commands = device.commands.splice(0).filter(x => Date.now() - x.at < 5000);
     res.json({ commands });
   });
-  router.post('/api/device/stop', deviceAuth, (req, res) => { device = null; res.sendStatus(204); });
+  router.get('/api/device/resume', deviceAuth, (req, res) => res.json({ name: device.name }));
+  router.post('/api/device/stop', deviceAuth, (req, res) => { device.lastSeen = 0; device.frame = null; device.frameAt = 0; device.commands = []; res.sendStatus(204); });
   router.get('/api/status', browserAuth, (req, res) => res.json({
     online: !!device && Date.now() - device.lastSeen < 10000,
     name: device?.name || '', frameAt: device?.frameAt || 0
@@ -98,7 +108,7 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
     if (device.commands.length >= 20) return res.sendStatus(429);
     device.commands.push({ type, x, y, x2, y2, text, at: Date.now() }); res.sendStatus(202);
   });
-  router.post('/api/disconnect', browserAuth, (req, res) => { device = null; pairing = null; res.sendStatus(204); });
+  router.post('/api/disconnect', browserAuth, (req, res) => { pairingStore?.clear(); device = null; pairing = null; res.sendStatus(204); });
   router.post('/api/logout', browserAuth, (req, res) => {
     for (const [key, value] of sessions) if (value === req.remoteSession) sessions.delete(key);
     res.set('Set-Cookie', `artauto_remote=; HttpOnly; SameSite=Strict; Path=/remote; Max-Age=0${secure ? '; Secure' : ''}`);

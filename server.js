@@ -62,7 +62,7 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '1mb' }));
-app.use('/remote', require('./src/remote').createRemoteRouter());
+app.use('/remote', require('./src/remote').createRemoteRouter({ pairingStore: require('./src/remote-pairing-store').createPairingStore(db) }));
 app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/payments', paymentRoutes);
