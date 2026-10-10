@@ -17,8 +17,23 @@ async function command(body){try{await api('command',body);}catch(e){error(e);}}
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>command({type:b.dataset.action}));
 const point=e=>{const r=$('screen').getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};};
 $('screen').tabIndex=0;
-$('screen').onpaste=e=>{const text=e.clipboardData?.getData('text/plain');if(text){e.preventDefault();command({type:'text',text});}};
-$('screen').onpointerdown=e=>{down=point(e);$('screen').focus({preventScroll:true});$('screen').setPointerCapture(e.pointerId);};
+// Only this dedicated input receives PC typing; login and other fields stay local.
+const keyboard=document.createElement('textarea');
+keyboard.setAttribute('aria-label','Teclado do celular remoto');
+keyboard.autocomplete='off';keyboard.spellcheck=false;
+keyboard.style.cssText='position:fixed;left:-10000px;top:0;width:1px;height:1px';
+document.body.appendChild(keyboard);
+const keyboardHint=document.createElement('p');
+keyboardHint.textContent='Clique no campo do celular e digite no teclado do PC. Ctrl+V cola; Backspace/Delete apagam. Enter não confirma. Campos protegidos usam o teclado do celular.';
+$('screen').insertAdjacentElement('afterend',keyboardHint);
+let keyboardQueue=Promise.resolve();
+function keyboardCommand(body){keyboardQueue=keyboardQueue.then(()=>live?command(body):undefined);}
+keyboard.oninput=e=>{if(e.isComposing)return;if(keyboard.value)keyboardCommand({type:'insert',text:keyboard.value.slice(0,1000)});keyboard.value='';};
+keyboard.oncompositionend=()=>{if(keyboard.value)keyboardCommand({type:'insert',text:keyboard.value.slice(0,1000)});keyboard.value='';};
+keyboard.onpaste=e=>{e.preventDefault();const text=e.clipboardData?.getData('text/plain');if(text)keyboardCommand({type:'insert',text:text.slice(0,1000)});};
+keyboard.onkeydown=e=>{if(e.key==='Backspace'||e.key==='Delete'){e.preventDefault();keyboardCommand({type:e.key==='Backspace'?'backspace':'delete'});}else if(e.key==='Enter'){e.preventDefault();}else if(e.key==='Escape'){keyboard.blur();$('screen').focus();}};
+$('screen').onfocus=()=>keyboard.focus({preventScroll:true});
+$('screen').onpointerdown=e=>{down=point(e);keyboard.focus({preventScroll:true});$('screen').setPointerCapture(e.pointerId);};
 $('screen').onpointercancel=()=>{down=null;};
 $('screen').onpointerup=e=>{if(!down)return;const end=point(e),start=down;down=null;command(Math.hypot(start.x-end.x,start.y-end.y)<.015?{type:'tap',...end}:{type:'swipe',...start,x2:end.x,y2:end.y});};
 $('typing').onsubmit=e=>{e.preventDefault();command({type:'text',text:e.target.text.value});e.target.text.value='';};

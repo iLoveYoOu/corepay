@@ -102,9 +102,9 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
   router.post('/api/command', browserAuth, express.json({ limit: '4kb' }), (req, res) => {
     if (!device || !device.frameAt || Date.now() - device.frameAt > 5000) return res.status(409).json({ error: 'Celular sem imagem atual' });
     const { type, x, y, x2, y2, text } = req.body;
-    if (!['tap', 'swipe', 'back', 'home', 'recents', 'text'].includes(type)) return res.sendStatus(400);
+    if (!['tap', 'swipe', 'back', 'home', 'recents', 'text', 'insert', 'backspace', 'delete'].includes(type)) return res.sendStatus(400);
     if (['tap', 'swipe'].includes(type) && ![x,y,...(type === 'swipe' ? [x2,y2] : [])].every(n => Number.isFinite(n) && n >= 0 && n <= 1)) return res.sendStatus(400);
-    if (type === 'text' && (typeof text !== 'string' || text.length > 1000)) return res.sendStatus(400);
+    if (['text', 'insert'].includes(type) && (typeof text !== 'string' || text.length > 1000)) return res.sendStatus(400);
     if (device.commands.length >= 20) return res.sendStatus(429);
     device.commands.push({ type, x, y, x2, y2, text, at: Date.now() }); res.sendStatus(202);
   });
