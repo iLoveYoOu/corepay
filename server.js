@@ -62,6 +62,7 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '1mb' }));
+app.use('/remote', require('./src/remote').createRemoteRouter());
 app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/payments', paymentRoutes);
