@@ -7,14 +7,22 @@ const scrypt = require('util').promisify(crypto.scrypt);
 function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD_HASH, secure = true, pairingStore = null } = {}) {
   const router = express.Router();
   const sessions = new Map(), failures = new Map();
-  let pairing = null, device = null;
+  let pairing = null;
+  const devices = new Map();
   const random = () => crypto.randomBytes(32).toString('hex');
   const digest = s => crypto.createHash('sha256').update(s).digest('hex');
-  const restore = () => {
-    const saved = pairingStore?.load();
-    if (saved && saved.expiresAt > Date.now() && saved.passwordFingerprint === digest(passwordHash || ''))
-      return { ...saved, lastSeen: 0, frame: null, commands: [] };
-    return null;
+  const saved = pairingStore?.load();
+  for (const d of (Array.isArray(saved) ? saved : saved ? [saved] : [])) {
+    if (d.expiresAt > Date.now() && d.passwordFingerprint === digest(passwordHash || '')) {
+      const id = d.id || 'legacy';
+      devices.set(id, { ...d, id, lastSeen: 0, frame: null, commands: [] });
+    }
+  }
+  const prune = () => { for (const [id, d] of devices) if (d.expiresAt <= Date.now()) { pairingStore?.clear(id); devices.delete(id); } };
+  const selectDevice = req => {
+    prune();
+    const id = req.body?.deviceId || req.query.deviceId;
+    return id ? devices.get(id) : devices.size === 1 ? devices.values().next().value : null;
   };
   const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length
     && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -63,43 +71,53 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
   };
   const deviceAuth = (req, res, next) => {
     const token = (req.get('authorization') || '').replace(/^Bearer /, '');
-    if (!device) device = restore();
-    if (!device || device.expiresAt < Date.now() || !equal(digest(token), device.tokenHash)) return res.status(401).json({ error: 'Pareie novamente' });
+    prune();
+    const device = [...devices.values()].find(d => equal(digest(token), d.tokenHash));
+    if (!device) return res.status(401).json({ error: 'Pareie novamente' });
+    req.remoteDevice = device;
     device.lastSeen = Date.now(); next();
   };
   router.get('/api/session', browserAuth, (req, res) => res.json({ csrf: req.remoteSession.csrf }));
   router.post('/api/pair-code', browserAuth, (req, res) => {
+    prune();
+    if (devices.size >= 2) return res.status(409).json({ error: 'Dois aparelhos já pareados. Revogue um deles antes de adicionar outro.' });
     pairing = { code: crypto.randomInt(10000000, 100000000).toString(), expires: Date.now() + 120000, attempts: 0 };
     res.json({ code: pairing.code, expiresAt: pairing.expires });
   });
   router.post('/api/device/pair', express.json({ limit: '2kb' }), (req, res) => {
     if (!pairing || pairing.expires < Date.now() || ++pairing.attempts > 5
       || !equal(String(req.body.code || ''), pairing.code)) return res.status(401).json({ error: 'Codigo invalido ou expirado' });
-    const token = random(); pairing = null;
-    device = { tokenHash: digest(token), name: String(req.body.name || 'Android').slice(0, 80), expiresAt: Date.now() + 90 * 86400000,
+    prune();
+    if (devices.size >= 2) return res.status(409).json({ error: 'Limite de dois aparelhos atingido' });
+    const token = random();
+    const device = { id: crypto.randomUUID(), tokenHash: digest(token), name: String(req.body.name || 'Android').slice(0, 80), expiresAt: Date.now() + 90 * 86400000,
       passwordFingerprint: digest(passwordHash || ''), lastSeen: Date.now(), frame: null, commands: [] };
     pairingStore?.save(device);
-    res.json({ token });
+    devices.set(device.id, device); pairing = null;
+    res.json({ token, deviceId: device.id });
   });
   router.post('/api/device/frame', deviceAuth, express.raw({ type: 'image/jpeg', limit: '1mb' }), (req, res) => {
     if (!Buffer.isBuffer(req.body) || req.body.length < 4 || req.body[0] !== 255 || req.body[1] !== 216) return res.sendStatus(400);
-    device.frame = req.body; device.frameAt = Date.now(); res.sendStatus(204);
+    req.remoteDevice.frame = req.body; req.remoteDevice.frameAt = Date.now(); res.sendStatus(204);
   });
   router.get('/api/device/commands', deviceAuth, (req, res) => {
-    const commands = device.commands.splice(0).filter(x => Date.now() - x.at < 5000);
+    const commands = req.remoteDevice.commands.splice(0).filter(x => Date.now() - x.at < 5000);
     res.json({ commands });
   });
-  router.get('/api/device/resume', deviceAuth, (req, res) => res.json({ name: device.name }));
-  router.post('/api/device/stop', deviceAuth, (req, res) => { device.lastSeen = 0; device.frame = null; device.frameAt = 0; device.commands = []; res.sendStatus(204); });
-  router.get('/api/status', browserAuth, (req, res) => res.json({
-    online: !!device && Date.now() - device.lastSeen < 10000,
-    name: device?.name || '', frameAt: device?.frameAt || 0
-  }));
+  router.get('/api/device/resume', deviceAuth, (req, res) => res.json({ name: req.remoteDevice.name, deviceId: req.remoteDevice.id }));
+  router.post('/api/device/stop', deviceAuth, (req, res) => { const device = req.remoteDevice; device.lastSeen = 0; device.frame = null; device.frameAt = 0; device.commands = []; res.sendStatus(204); });
+  router.get('/api/status', browserAuth, (req, res) => {
+    prune();
+    const rows = [...devices.values()].map(d => ({ id: d.id, name: d.name, online: Date.now()-d.lastSeen < 10000, frameAt: d.frameAt || 0 }));
+    res.json({ version: '2.0', devices: rows, online: rows.length === 1 && rows[0].online, name: rows.length === 1 ? rows[0].name : '', frameAt: rows.length === 1 ? rows[0].frameAt : 0 });
+  });
   router.get('/api/frame', browserAuth, (req, res) => {
+    const device = selectDevice(req);
     if (!device?.frame || Date.now() - device.frameAt > 10000) return res.sendStatus(404);
     res.type('image/jpeg').send(device.frame);
   });
   router.post('/api/command', browserAuth, express.json({ limit: '4kb' }), (req, res) => {
+    const device = selectDevice(req);
     if (!device || !device.frameAt || Date.now() - device.frameAt > 5000) return res.status(409).json({ error: 'Celular sem imagem atual' });
     const { type, x, y, x2, y2, text } = req.body;
     if (!['tap', 'swipe', 'back', 'home', 'recents', 'text', 'insert', 'backspace', 'delete'].includes(type)) return res.sendStatus(400);
@@ -108,7 +126,11 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
     if (device.commands.length >= 20) return res.sendStatus(429);
     device.commands.push({ type, x, y, x2, y2, text, at: Date.now() }); res.sendStatus(202);
   });
-  router.post('/api/disconnect', browserAuth, (req, res) => { pairingStore?.clear(); device = null; pairing = null; res.sendStatus(204); });
+  router.post('/api/disconnect', browserAuth, express.json({ limit: '2kb' }), (req, res) => {
+    const device = selectDevice(req);
+    if (!device) return res.status(409).json({ error: 'Selecione o aparelho a revogar' });
+    pairingStore?.clear(device.id); devices.delete(device.id); pairing = null; res.sendStatus(204);
+  });
   router.post('/api/logout', browserAuth, (req, res) => {
     for (const [key, value] of sessions) if (value === req.remoteSession) sessions.delete(key);
     res.set('Set-Cookie', `artauto_remote=; HttpOnly; SameSite=Strict; Path=/remote; Max-Age=0${secure ? '; Secure' : ''}`);
