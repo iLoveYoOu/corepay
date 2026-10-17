@@ -19,15 +19,24 @@ function createCard(device) {
   const root=element('article',$('devices'));root.className='device';root.dataset.deviceId=device.id;
   const title=element('h2',root,device.name);
   const state=element('p',root,'Desconectado');state.setAttribute('role','status');
+  const playback=element('nav',root);
+  const play=element('button',playback,'Play');
+  const pause=element('button',playback,'Pause');
+  const usage=element('p',root,'Imagens recebidas nesta sessão: 0 MB (não é o total cobrado pelo Render).');
+  usage.className='hint';
   const screen=element('img',root);screen.alt='Tela de '+device.name;screen.className='screen';screen.hidden=true;screen.draggable=false;screen.tabIndex=0;
-  const hint=element('p',root,'Clique na tela para direcionar o teclado a este aparelho. Ctrl+V cola; Enter não confirma.');hint.className='hint';
+  const hint=element('p',root,'Economia: até 1 imagem/s; pausa ao ocultar a aba ou após 2 minutos sem comandos. Pause interrompe a visualização e o controle nesta aba, não a captura no Android. Clique na tela para digitar; Ctrl+V cola, Enter não confirma.');hint.className='hint';
   const keyboard=element('textarea',root);keyboard.className='remote-keyboard';keyboard.setAttribute('aria-label','Teclado de '+device.name);keyboard.autocomplete='off';keyboard.spellcheck=false;
   const nav=element('nav',root);
   const form=element('form',root);const input=element('input',form);input.name='text';input.placeholder='Texto para '+device.name;input.maxLength=1000;input.autocomplete='off';
   element('button',form,'Inserir texto');
   let imageUrl='',down=null,alive=true,ready=false,queue=Promise.resolve();
-  const command=body=>{if(!ready||!alive||!live)return Promise.resolve();const generation=epoch;
-    queue=queue.then(async()=>{if(!alive||!ready||!live||epoch!==generation)return;try{await api('command',{...body,deviceId:device.id});}catch(e){state.textContent=e.message;}});return queue;};
+  let playing=false,revision=0,lastActive=0,lastHash='',bytes=0,controller=null;
+  const pauseView=()=>{playing=false;revision++;controller?.abort();hide();lastHash='';state.textContent='Pausado — clique Play para ver e controlar. O celular permanece pareado.';};
+  const playView=()=>{playing=true;lastActive=Date.now();state.textContent='Carregando imagem…';};
+  play.onclick=playView;pause.onclick=pauseView;
+  const command=body=>{if(!ready||!alive||!live||!playing||document.hidden)return Promise.resolve();const generation=epoch,version=revision;lastActive=Date.now();
+    queue=queue.then(async()=>{if(!alive||!ready||!live||!playing||document.hidden||revision!==version||epoch!==generation)return;try{await api('command',{...body,deviceId:device.id});}catch(e){state.textContent=e.message;}});return queue;};
   for(const [type,label] of [['back','Voltar'],['home','Início'],['recents','Recentes']]) element('button',nav,label).onclick=()=>command({type});
   const revoke=element('button',root,'Revogar este aparelho');revoke.className='revoke';revoke.onclick=async()=>{
     if(!confirm('Revogar o acesso de '+device.name+'? Será necessário parear esse aparelho novamente.'))return;
@@ -46,21 +55,24 @@ function createCard(device) {
   screen.onpointerup=e=>{if(!down)return;const end=point(e),start=down;down=null;command(Math.hypot(start.x-end.x,start.y-end.y)<.015?{type:'tap',...end}:{type:'swipe',...start,x2:end.x,y2:end.y});};
   form.onsubmit=e=>{e.preventDefault();command({type:'text',text:input.value});input.value='';};
   const hide=()=>{ready=false;down=null;screen.hidden=true;screen.removeAttribute('src');if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl='';};
-  const card={root,update(d){title.textContent=d.name;state.textContent=d.online?'Conectado: '+d.name:'Desconectado — abra o Remote no aparelho.';if(!d.online)hide();},
-    async frame(){const generation=epoch;try{const r=await fetch('/remote/api/frame?deviceId='+encodeURIComponent(device.id));
-      if(r.status===401){showLogin();return;}if(!r.ok){hide();return;}const blob=await r.blob();if(!alive||!live||generation!==epoch)return;
+  const card={root,play:playView,pause:pauseView,update(d){title.textContent=d.name;state.textContent=!playing?'Pausado — clique Play para ver e controlar.':d.online?'Conectado: '+d.name:'Desconectado — abra o Remote no aparelho.';if(!d.online){hide();lastHash='';}},
+    async frame(){if(!playing)return;if(document.hidden||Date.now()-lastActive>120000){pauseView();return;}const generation=epoch,version=revision;controller=new AbortController();try{const r=await fetch('/remote/api/frame?deviceId='+encodeURIComponent(device.id)+'&since='+encodeURIComponent(lastHash),{signal:controller.signal});
+      if(!alive||!playing||generation!==epoch||version!==revision)return;
+      if(r.status===401){showLogin();return;}if(r.status===204)return;if(!r.ok){hide();lastHash='';return;}const blob=await r.blob();if(!alive||!live||!playing||generation!==epoch||version!==revision)return;
+      lastHash=r.headers.get('X-Frame-Hash')||'';bytes+=blob.size;usage.textContent='Imagens recebidas nesta sessão: '+(bytes/1000000).toFixed(2)+' MB (não inclui outros tráfegos nem outras abas).';
       const next=URL.createObjectURL(blob);screen.src=next;screen.hidden=false;ready=true;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=next;
-    }catch(e){hide();state.textContent='Sem imagem atual: '+e.message;}},
-    destroy(){alive=false;hide();root.remove();}};
+    }catch(e){if(e.name==='AbortError')return;hide();lastHash='';state.textContent='Sem imagem atual: '+e.message;}},
+    destroy(){alive=false;pauseView();root.remove();}};
   return card;
 }
 let statusAt=0;
-async function tick(){try{if(live){const generation=epoch;
-  if(Date.now()-statusAt>2000){const s=await api('status');if(generation!==epoch||!live)return;statusAt=Date.now();
+document.addEventListener('visibilitychange',()=>{if(document.hidden)for(const c of cards.values())c.pause();});
+async function tick(){try{if(live&&!document.hidden){const generation=epoch;
+  if(Date.now()-statusAt>10000){const s=await api('status');if(generation!==epoch||!live)return;statusAt=Date.now();
     const rows=s.devices||[];for(const [id,c] of cards)if(!rows.some(d=>d.id===id)){c.destroy();cards.delete(id);}
     for(const d of rows){if(!cards.has(d.id))cards.set(d.id,createCard(d));cards.get(d.id).update(d);}
     $('pair').disabled=rows.length>=2;if(rows.length>=2)$('code').textContent='';$('status').textContent=rows.length+' de 2 aparelhos pareados. Cada tela possui controles independentes.';
   }
   await Promise.all([...cards.values()].map(c=>c.frame()));
-}}catch(e){error(e);}finally{setTimeout(tick,150);}}
+}}catch(e){error(e);}finally{setTimeout(tick,1000);}}
 api('session').then(s=>{csrf=s.csrf;connected();}).catch(()=>{});tick();

@@ -98,7 +98,7 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
   });
   router.post('/api/device/frame', deviceAuth, express.raw({ type: 'image/jpeg', limit: '1mb' }), (req, res) => {
     if (!Buffer.isBuffer(req.body) || req.body.length < 4 || req.body[0] !== 255 || req.body[1] !== 216) return res.sendStatus(400);
-    req.remoteDevice.frame = req.body; req.remoteDevice.frameAt = Date.now(); res.sendStatus(204);
+    req.remoteDevice.frame = req.body; req.remoteDevice.frameHash = crypto.createHash('sha256').update(req.body).digest('hex'); req.remoteDevice.frameAt = Date.now(); res.sendStatus(204);
   });
   router.get('/api/device/commands', deviceAuth, (req, res) => {
     const commands = req.remoteDevice.commands.splice(0).filter(x => Date.now() - x.at < 5000);
@@ -114,6 +114,8 @@ function createRemoteRouter({ passwordHash = process.env.ARTAUTO_REMOTE_PASSWORD
   router.get('/api/frame', browserAuth, (req, res) => {
     const device = selectDevice(req);
     if (!device?.frame || Date.now() - device.frameAt > 10000) return res.sendStatus(404);
+    res.set('X-Frame-Hash', device.frameHash);
+    if (req.query.since === device.frameHash) return res.status(204).end();
     res.type('image/jpeg').send(device.frame);
   });
   router.post('/api/command', browserAuth, express.json({ limit: '4kb' }), (req, res) => {

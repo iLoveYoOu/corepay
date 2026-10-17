@@ -41,6 +41,14 @@ const {createPairingStore} = require('../src/remote-pairing-store');
       const r=await fetch(base+'frame?deviceId='+id,{headers:{Cookie:cookie}});assert.equal(Buffer.from(await r.arrayBuffer())[2],byte);
     }
     assert.equal((await fetch(base+'frame?deviceId=legacy')).status,401);
+    const frameResponse=await fetch(base+'frame?deviceId=legacy',{headers:{Cookie:cookie}});
+    const frameHash=frameResponse.headers.get('x-frame-hash');
+    assert.match(frameHash,/^[a-f0-9]{64}$/);
+    const unchanged=await fetch(base+'frame?deviceId=legacy&since='+frameHash,{headers:{Cookie:cookie}});
+    assert.equal(unchanged.status,204);assert.equal((await unchanged.arrayBuffer()).byteLength,0);
+    await frame(oldToken,3);
+    assert.equal((await fetch(base+'frame?deviceId=legacy&since='+frameHash,{headers:{Cookie:cookie}})).status,200);
+    assert.equal((await fetch(base+'frame?deviceId='+second.deviceId+'&since='+frameHash,{headers:{Cookie:cookie}})).status,200);
     assert.equal((await post('command',{deviceId:'legacy',type:'home'},{'X-Remote-CSRF':'bad'})).status,403);
     await stop();store=createPairingStore(db);await start();await login();
     assert.equal((await deviceGet('resume',oldToken)).status,200);
